@@ -1,0 +1,10 @@
+.Rproj.user
+.Rproj
+.Rhistory
+.RData
+.Ruserdata
+*.xdsl
+Data
+Results
+License.R
+*.tar.gz
