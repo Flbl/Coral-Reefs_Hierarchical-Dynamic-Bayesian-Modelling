@@ -63,13 +63,13 @@ source("License.R")
   
   # RORC
   # Coral
-  coralRorc <- read.csv(file.path("Data", "Processed","RORC_Coral_Data_hdbn.csv"))
+  coralRorc <- read.csv(file.path("Data", "Species","RORC_Coral_Data_hdbn.csv"))
   coralRorc$Station <- gsub(" ","_", coralRorc$Station)
   coralRorc$Site <- gsub(" ","_", coralRorc$Site)
   # Fish
-  fishRorc <- read.csv(file.path("Data", "Processed","RORC_Fish_Data_hdbn.csv"))
+  fishRorc <- read.csv(file.path("Data", "Species","RORC_Fish_Data_hdbn.csv"))
   # Inv
-  invRorc <- read.csv(file.path("Data", "Processed","RORC_Inv_Data_hdbn.csv"))
+  invRorc <- read.csv(file.path("Data", "Species","RORC_Inv_Data_hdbn.csv"))
   
   
   # Create the nodes
@@ -337,8 +337,11 @@ source("License.R")
   # EXPORT THE MODEL
   net$writeFile(file.path("Results", "Rorc_HDBN_Template.xdsl"))
   
-  
-  
+  # Export the CPTs
+  net$getNodeDefinition("RorcInvAbund_Station_menaku_Sample_2")
+  net$getParentIds("RorcInvAbund_Station_menaku_Sample_2")
+  net$getNodeDefinition("RorcInvAbund_Station_menaku")
+  net$getOutcomeIds("RorcInvAbund_Station_menaku")
   
   
   # Extract structure
