@@ -64,6 +64,7 @@ source("Scripts/00_Initialisation.R")
       x = "RorcHCB"
       data = coralRorc
       x = "RorcCarnivoreAbund"
+      x = "RorcFishRichness"
       data = fishRorc
       
       by = c("Year","Station", "Sample")
@@ -84,7 +85,7 @@ source("Scripts/00_Initialisation.R")
     test <- df[df$Station == "bancs_du_nord",]
     
     # Get temporal series plot per sample
-    ggplot(data = test, aes(x = Year, y = !!sym(x), group = 1))+
+    ggplot(data = test, aes(x = as.factor(Year), y = !!sym(x), group = 1))+
       geom_point(aes(color = as.factor(Sample)))+
       geom_path(aes(color = as.factor(Sample)))+
       facet_wrap(.~Sample) +
@@ -94,12 +95,16 @@ source("Scripts/00_Initialisation.R")
     # Mixture Model to identify multiple gaussian modes 
     model <- Mclust(test[[x]])
     model$G
-    model <- Mclust(test[[x]], G = 2)
+    # model <- Mclust(test[[x]], G = 2)
     model$parameters$mean
     model$parameters$variance$sigmasq
     # model$z
     # model$classification
     # model$data
+    
+    # Get state thresholds
+    # If there are more than two modes, keep the two extremes and leave the middle to "normal/medium/transitory" state
+    thres <- c(first(model$parameters$mean), last(model$parameters$mean))
     
     # Check histogram and model density distribution
     par(mfrow = c(1,2))
@@ -107,10 +112,8 @@ source("Scripts/00_Initialisation.R")
          main = "", #Coral cover with Gaussian mixture fit
          xlab = x)    
     plot(model, what = "density", add = TRUE, xlab = x)
-    abline(v = model$parameters$mean, col = "lightblue")
+    abline(v = thres, col = "lightblue")
     
-    # Add thresholds
-    thres <- model$parameters$mean
     # 2 thresholds
     test$classification <- NA 
     test$classification[test[[x]] <= thres[1]] <- "Low"
@@ -121,7 +124,6 @@ source("Scripts/00_Initialisation.R")
     # The palette with black:
     # cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
     
-    
     ggplot(data = test, aes(x = Year, y = !!sym(x), group = 1))+
       geom_path() +
       geom_point(aes(color = classification)) +
@@ -130,6 +132,7 @@ source("Scripts/00_Initialisation.R")
       geom_hline(yintercept = thres[1], linetype = "dashed", linewidth = 0.1) +
       geom_hline(yintercept = thres[2], linetype = "dashed", linewidth = 0.1) +
       theme_classic()
+    
     
   }
   
