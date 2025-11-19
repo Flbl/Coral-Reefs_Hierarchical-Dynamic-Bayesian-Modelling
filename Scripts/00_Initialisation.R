@@ -58,3 +58,23 @@ if(init1 == "01_Data_To_States.R") {
 }
 
 
+
+
+
+# FUNCTIONS
+
+safe_Mclust <- function(x, ...) {
+  
+  out <- tryCatch(
+    {
+      mclust::Mclust(x, ...)
+    },
+    error = function(e) NULL,
+    warning = function(w) NULL
+  )
+  
+  return(out)
+  
+}
+
+

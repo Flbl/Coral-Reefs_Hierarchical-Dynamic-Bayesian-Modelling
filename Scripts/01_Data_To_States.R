@@ -73,9 +73,207 @@ source("Scripts/00_Initialisation.R")
     # Coral:
     varNames <- colnames(coralRorc)[grep("Rorc", colnames(coralRorc))]  
     # varNames <- colnames(fishRorc)[grep("Rorc", colnames(coralRorc))]  
-    varNames <- colnames(fishRorc)[grep("Rorc", colnames(fishRorc))]  
+    # varNames <- colnames(fishRorc)[grep("Rorc", colnames(fishRorc))]  
   
     # Function
+     makeDDThresholds <- function(x, nbState, zeroState = TRUE, plot = TRUE, varName = "Variable"){
+      
+      # Test Zone
+      # x = coralRorc$RorcHCB
+      # x = coralRorc$RorcSD_SI
+      # nbState = 5
+      # zeroState = TRUE
+      # plot = TRUE
+      # varName = "VariableTest"
+      # eo test zone
+      # print(x)
+      
+      # Process data
+        # Convert to numeric if it isn't already
+        x <- as.numeric(x)
+        
+        dataPos <- x[x > 0]
+        
+        dataPos_tr <- log(dataPos)
+
+      # GETTING THRESHOLDS
+        
+        # GMM
+          # Run model on positive log transformed data
+          # safe_Mclust is a custom trycatch function from Mclust that yields NULL if there is an error (= model cannot run on the data)
+          model <- safe_Mclust(dataPos_tr) #, G = nbState-1  , G = c(1:6)
+          
+          # if null model, then create empty res df
+          if(is.null(model)){
+            
+            res <- t(as.data.frame(c("GMM",rep(NA, nbState))))
+            colnames(res) <- c("Method", paste0("State", seq_len(nbState)))
+            rownames(res) <- varName
+            
+          }else{
+            
+            # print(model)
+            # Model checking
+            # Number of modes found
+            # model$G
+            # Summary
+            print(summary(model))
+            # Uncertainty plot
+            # plot(model, what = "uncertainty")
+            # Uncertainty mean (closer to zero = good)
+            # mean(model$uncertainty)
+            # Model modes
+            # model$parameters$mean
+            # Transforming back to "raw values"
+            print(exp(model$parameters$mean))
+            # BIC
+            # model$BIC
+            
+            # Extracting values
+            params <- model$parameters
+            G <- model$G                     # number of clusters
+            pro <- params$pro                 # mixing proportions
+            mean_tr <- params$mean               # means
+            sd_tr   <- sqrt(params$variance$sigmasq)  # standard deviations (univariate only)
+            
+            
+            # GMM Thresholds 
+            
+            # We've obtained breaking values from GMM, potentially expressing ecological regimes/grouping
+            # We let the algorithm decide how many modes we get, however now we need to establish thresholds based on the number of States we chose
+            # Now, the idea is that if the number of modes doesn't fit the number of states:
+            # If modes > states, then we use quantiles to regroup closely related modes vector in a simple datadriven way (by adding 0 and max(data) in the vector)
+            # If we count only zeros as a state, then we substract one quantile prob  # Deprecated : (shunt the first quantile value and start from zero instead of the first quantile value to determine the second state range)
+            # if(G >= nbState) {
+              if(zeroState == TRUE) {
+                thres <- quantile(c(0,exp(mean_tr), max(dataPos)), probs = seq(0,1, 1/(nbState-1))) #max(dataPos or 100 doesnt change anything in computation)
+                # thres <- quantile(c(0,exp(mean_tr), 100), probs = seq(0,1, 1/(nbState-1)))
+                # thres <- thres[-length(thres)]
+              }else{
+                thres <- quantile(c(0,exp(mean_tr), max(dataPos)), probs = seq(0,1, 1/(nbState)))
+                # thres <- thres[-c(1, length(thres))]
+                
+              }
+              
+            # }else{
+            #   if(G < nbState){
+            #     
+            #   thres <- c(0,exp(mean_tr))
+            #     
+            #   }else{
+            #     
+            #   }
+            # }
+            
+            
+            # Now create a dataframe out of this:
+            res <- t(as.data.frame(c("GMM",thres)))
+            colnames(res) <- c("Method", paste0("State", seq_len(nbState)))
+            rownames(res) <- varName
+            
+            
+          }
+          
+          
+        # QUANTILES 
+          # Calculate quantiles to get both GMM and quantiles
+          # Also, if GMM fails (not enough data/too many low values), we still have quantiles
+          # Check if zero state, if yes then 1 less quantile as zero will be a single value for a state
+          if(zeroState == TRUE) {
+            thresQTL <- quantile(c(dataPos_tr), probs = seq(0,1, 1/(nbState-1))) 
+          }else{
+            thresQTL <- quantile(c(dataPos_tr), probs = seq(0,1, 1/(nbState)))
+
+          }
+          
+          # Convert back to "raw values"
+          thresQTL <- exp(thresQTL)
+          # Small twick : since we're on pos values, change the first value to zero
+          thresQTL[1] <- 0
+          # Now create a dataframe out of this:
+          resQTL <- t(as.data.frame(c("Quantiles",thresQTL)))
+          colnames(resQTL) <- c("method", paste0("State", seq_len(nbState)))
+          rownames(resQTL) <- varName
+          
+          
+        # Rbound GMM and quantiles 
+        resAll <- rbind(res, resQTL)
+          
+        # PLOT
+          
+          # Only if plot == true then printing the plot 
+          if(plot == TRUE) {
+            
+            xgrid <- seq(min(dataPos, na.rm = TRUE),
+                         max(dataPos, na.rm = TRUE),
+                         length.out = 400)
+            
+            # Convert to log scale
+            xgrid_tr <- log(xgrid)
+            
+            # Component densities (without zeros)
+            # Compute component densities back in raw data space and not log
+            dens_df <- lapply(1:G, function(g) {
+              # Density(log scale) * Jacobian
+              density_raw <- pro[g] * dnorm(xgrid_tr, mean_tr[g], sd_tr) * (1/xgrid)
+              
+              tibble(
+                x = xgrid,
+                density = density_raw,
+                component = paste0("Comp ", g)
+              )
+            }) %>% bind_rows()
+            
+            # Total mixture density (no zeros)
+            dens_total <- dens_df %>%
+              group_by(x) %>%
+              summarise(density = sum(density)) %>%
+              mutate(component = "Mixture")
+            
+            data <- as.data.frame(x)
+            colnames(data) <- varName
+            
+            p <- ggplot(data = data, aes(x = !!sym(varName))) +
+              geom_histogram(aes(y = ..density..), fill = "darkgrey", color = "grey35", bins = 50)+ #  binwidth = 1
+              geom_density(fill = "#69b3a2", color = "lightgrey", alpha = 0.4)+
+              # geom_histogram(aes(y = ..density..), fill = "darkgrey", color = "grey35")+ # bins = 30
+              # geom_density(aes(y = ..scaled..), fill = "#69b3a2", color = "lightgrey", alpha = 0.4)+
+              geom_line(data = dens_total,
+                        aes(x = x, y = density),
+                        linewidth = 1.1, color = "black", alpha = 0.9) +
+              geom_line(data = dens_df,
+                        aes(x = x, y = density, color = component),
+                        linewidth = 0.7, alpha = 0.6) +
+              geom_vline(xintercept = as.numeric(resAll[1,2:nbState+1]), linetype = "dashed", linewidth = 0.7, color = "lightblue", alpha = 0.7) +
+              geom_vline(xintercept = as.numeric(resAll[2,2:nbState+1]), linetype = "solid", linewidth = 0.7, color = "red", alpha = 0.7) +
+              scale_x_continuous(breaks = seq(0,100,10)) +
+              labs(x = varName,
+                   y = "Density",
+                   color = "Component") +
+              theme_classic()
+            
+            print(p)
+            
+            
+          }
+          
+          exp(mean_tr)
+        
+        
+        
+        
+        
+        return(resAll)
+        
+        
+    } 
+  
+  
+  makeDDThresholds(coralRorc$RorcHCB, varName = "Rorc", nbState = 5, zeroState = TRUE, plot = TRUE)
+  makeDDThresholds(coralRorc$RorcCoralRichness, varName = "Rorc", nbState = 5, zeroState = TRUE, plot = TRUE)
+  makeDDThresholds(coralRorc$RorcRC, varName = "Rorc", nbState = 5, zeroState = TRUE, plot = TRUE)
+  
+  
     DDThresholds <- do.call(rbind, lapply(varNames[1:6], function(x, data = coralRorc, nbState = 5, zeroState = TRUE){
       
       # Test Zone
