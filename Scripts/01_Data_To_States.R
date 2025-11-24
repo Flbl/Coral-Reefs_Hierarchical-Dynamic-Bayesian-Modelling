@@ -76,7 +76,7 @@ source("Scripts/00_Initialisation.R")
     # varNames <- colnames(fishRorc)[grep("Rorc", colnames(fishRorc))]  
   
     # Function
-     makeDDThresholds <- function(x, nbState, zeroState = TRUE, plot = TRUE, varName = "Variable"){
+     makeDDThresholds <- function(x, nbState, zeroState = TRUE, plot = TRUE, varName = "Variable", save = FALSE, savePath){
       
       # Test Zone
       # x = coralRorc$RorcHCB
@@ -350,6 +350,12 @@ source("Scripts/00_Initialisation.R")
             
             print(p)
             
+            if(save == TRUE){
+              
+              dir.create(savePath, showWarnings = FALSE)
+              ggsave(filename = file.path(savePath, paste0("Thresholds_plot_",varName,".pdf")), plot = p, device = "pdf", width = 190, height = 150, units = "mm")
+              
+            }
             
           }
           
@@ -358,14 +364,19 @@ source("Scripts/00_Initialisation.R")
         
         
         
+        resAllFinal <- cbind(data.frame(Variable = rownames(resAll)), resAll)
+        rownames(resAllFinal) <- NULL
+        resAllFinal$Variable <- gsub(".1","", resAllFinal$Variable)
         
-        return(resAll)
+        return(resAllFinal)
         
         
     } 
   
+     
   
-  makeDDThresholds(coralRorc$RorcHCB, varName = "RorcHCB", nbState = 5, zeroState = TRUE, plot = TRUE)
+  
+  makeDDThresholds(coralRorc$RorcHCB, varName = "RorcHCB", nbState = 5, zeroState = TRUE, plot = TRUE, save = TRUE, savePath = file.path(pathPro, "Thresholds","General"))
   makeDDThresholds(coralRorc$RorcHCO, varName = "RorcHCO", nbState = 5, zeroState = TRUE, plot = TRUE)
   makeDDThresholds(coralRorc$RorcCoralRichness, varName = "RorcSR", nbState = 5, zeroState = TRUE, plot = TRUE)
   makeDDThresholds(coralRorc$RorcHCM, varName = "RorcHCM", nbState = 5, zeroState = TRUE, plot = TRUE)
@@ -380,19 +391,60 @@ source("Scripts/00_Initialisation.R")
   makeDDThresholds(invRorc$RorcInvRichness, varName = "RorcInvSR", nbState = 5, zeroState = TRUE, plot = TRUE)
   
   
+  # CORAL
+  thresholdsCoral <- do.call(rbind, lapply(varNames, function(x, data = coralRorc) {
     
-  thresholds <- do.call(rbind, lapply(coralRorc[varNames], makeDDThresholds))
+    # x = varNames[1]
+    
+    res <- makeDDThresholds(data[,x], varName = x, nbState = 5, zeroState = TRUE, plot = TRUE, save = TRUE, savePath = file.path(pathPro, "Thresholds","General"))
+    
+    return(res)
+  }
+  ))
+    
+    
+  
+  
+  
+  # FISH
+  
+  varNames <- colnames(fishRorc)[grep("Rorc", colnames(fishRorc))]
+  # varNames <- colnames(fishRorc)[grep("Rorc", colnames(fishRorc))]  
+  
+  
+  thresholdsFish <- do.call(rbind, lapply(varNames, function(x, data = fishRorc) {
+    
+    # x = varNames[1]
+    
+    res <- makeDDThresholds(data[,x], varName = x, nbState = 5, zeroState = TRUE, plot = TRUE, save = TRUE, savePath = file.path(pathPro, "Thresholds","General"))
+    
+    return(res)
+  }
+  ))  
     
     
     
     
+  # Invertebrates
+  
+  varNames <- colnames(invRorc)[grep("Rorc", colnames(invRorc))]
+  # varNames <- colnames(fishRorc)[grep("Rorc", colnames(fishRorc))]  
+  
+  
+  thresholdsInv <- do.call(rbind, lapply(varNames, function(x, data = invRorc) {
     
+    # x = varNames[1]
     
+    res <- makeDDThresholds(data[,x], varName = x, nbState = 5, zeroState = TRUE, plot = TRUE, save = TRUE, savePath = file.path(pathPro, "Thresholds","General"))
     
-    
-    
-    
-    
+    return(res)
+  }
+  ))  
+  
+  
+  thresholdsGeneral <- rbind(thresholdsCoral, thresholdsFish, thresholdsInv)
+  
+  write.csv(thresholdsGeneral, file = file.path(pathPro, "Thresholds","Thresholds_General_DD.csv"), row.names = FALSE)
     
     
 # TRASH ----
