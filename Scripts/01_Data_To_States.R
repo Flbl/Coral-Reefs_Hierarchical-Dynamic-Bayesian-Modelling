@@ -21,8 +21,10 @@
   # (Probably better like this to put a marker in the column name to identify meta from variables from biological data)
   # (Different datasets can be generated if the data is very heterogeneous (different sites/samplings) to not create many NAs in eventual grid expansions) 
 
-  # This script will read the data and convert each biological variable observation per year into a state (High, Normal, Low, Zero), depending on the available data 
-  # For that it takes the whole temporal series of the station and checks for trends and mean value, checks the last value and coordinates a choice based on one or each results depending on data availability
+  # This script will read the data and convert each biological variable observation per year into a state (e.g. High, Normal, Low, Zero), depending on the available data 
+  # For The General thresholds : Two methods are proposed : GMM to identify 
+  # that it takes the whole temporal series of the station and checks for trends and mean value, checks the last value and coordinates a choice based on one or each results depending on data availability
+  # 
 
 
 # INIT -----
@@ -61,6 +63,39 @@ source("Scripts/00_Initialisation.R")
   
 # PROCESS ----
   
+  # Identify variables
+  varCoral <- colnames(coralRorc)[grep("Rorc", colnames(coralRorc))]  
+  varFish <- colnames(fishRorc)[grep("Rorc", colnames(fishRorc))]
+  varInv <- colnames(invRorc)[grep("Rorc", colnames(invRorc))]
+  
+  # Aggregate datasets to their means per station
+  # Aggregate by station
+  coralRorcMean <- coralRorc %>%
+    select(-Sample) %>%           # drop the transect column
+    group_by(Year, Country, Region, Sector, Site, Station) %>%   # your metadata columns
+    summarise(across(all_of(varCoral), mean), .groups = "drop")
+  
+  # coralRorcSD <- coralRorc %>%
+  #   select(-Sample) %>%           # drop the transect column
+  #   group_by(Year, Country, Region, Sector, Site, Station) %>%   # your metadata columns
+  #   summarise(across(all_of(varCoral), sd), .groups = "drop")
+  
+  fishRorcMean <- fishRorc %>%
+    select(-Sample) %>%           # drop the transect column
+    group_by(Year, Country, Region, Sector, Site, Station) %>%   # your metadata columns
+    summarise(across(all_of(varFish), mean), .groups = "drop")
+  
+  invRorcMean <- invRorc %>%
+    select(-Sample) %>%           # drop the transect column
+    group_by(Year, Country, Region, Sector, Site, Station) %>%   # your metadata columns
+    summarise(across(all_of(varInv), mean), .groups = "drop")
+  
+  
+# GENERAL THRESHOLD ----
+  
+  # All data is used to calulate data driven thresholds using GMM and quantiles to establish global states of quality
+  # This assumes that there is enough data in the temporal series to distinguish the "health" gradient from zero/bad to good/very good
+  
   # Create Thresholds from the available data
   # For each variable, make a gaussian Mixture Model and estimate the thresholds. Calculate also the quantiles 
   # Export thresholds to a CSV
@@ -70,23 +105,19 @@ source("Scripts/00_Initialisation.R")
   # (Export two files : "_GMM" for mixture models and "_QTLS" for quantiles)
   # 
   
-    # Coral:
-    varNames <- colnames(coralRorc)[grep("Rorc", colnames(coralRorc))]  
-    # varNames <- colnames(fishRorc)[grep("Rorc", colnames(coralRorc))]  
-    # varNames <- colnames(fishRorc)[grep("Rorc", colnames(fishRorc))]  
-  
     # Function
-     makeDDThresholds <- function(x, nbState, zeroState = TRUE, plot = TRUE, varName = "Variable", save = FALSE, savePath){
+    makeDDThresholds <- function(x, nbState, zeroState = TRUE, plot = TRUE, varName = "Variable", savePlot = FALSE, savePath){
       
       # Test Zone
       # x = coralRorc$RorcHCB
+      # x = coralRorc$RorcHCO
       # x = coralRorc$RorcSD_SI
       # x = coralRorc$RorcRC
       # x = coralRorc$RorcCoralRichness
       # nbState = 5
       # zeroState = TRUE
       # plot = TRUE
-      # varName = "VariableSR"
+      # varName = "VariableHCO"
       # eo test zone
       # print(x)
       
@@ -184,15 +215,23 @@ source("Scripts/00_Initialisation.R")
           # Check if zero state, if yes then 1 less quantile as zero will be a single value for a state
           if(zeroState == TRUE) {
             thresQTL <- quantile(c(dataPos_tr), probs = seq(0,1, 1/(nbState-1))) 
+            thresQTL <- exp(thresQTL)
+            # Replace the first quantile by 0 or the zero state, because the 0% is irrelevant to get (for 5 states) :
+            # State 0: zero
+            # State 1: (0, Q25]
+            # State 2: (Q25, Q50]
+            # State 3: (Q50, Q75]
+            # State 4: (Q75, Q100]
+            thresQTL[1] <- 0
+            
           }else{
             thresQTL <- quantile(c(dataPos_tr), probs = seq(0,1, 1/(nbState)))
-
+            thresQTL <- exp(thresQTL)
+            
           }
           
           # Convert back to "raw values"
-          thresQTL <- exp(thresQTL)
           # Small twick : since we're on pos values, change the first value to zero
-          thresQTL[1] <- 0
           # Now create a dataframe out of this:
           resQTL <- t(as.data.frame(c("Quantiles",thresQTL)))
           colnames(resQTL) <- c("method", paste0("State", seq_len(nbState)))
@@ -266,8 +305,22 @@ source("Scripts/00_Initialisation.R")
             # vline_df$State <- c("Zero","Zero - Low","Low - Intermediate","Intermediate - Good","Good - Very Good")
             # vline_df$Method <- "Quantiles"
             
+            thresQTL_Plot <- c(-max(thresQTL)/100, thresQTL)
+            state_colors <- c("#d7191c", "orange", "yellow", "#a6d96a", "#1a9641") 
+            
+            rectDf <- data.frame(xmin = thresQTL_Plot[-length(thresQTL_Plot)],
+                                 xmax = thresQTL_Plot[-1],
+                                 fillC = state_colors,
+                                 state = factor(c("Zero","Low","Intermediate","Good","Very Good"), levels = c("Zero","Low","Intermediate","Good","Very Good"))
+                                 )
+            
             # Basic plot
             p <- ggplot(data = data, aes(x = !!sym(varName))) +
+              # State rects
+              geom_rect(data = rectDf,
+                        aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = 0, fill = state), alpha = 0.8, inherit.aes = FALSE) +
+              scale_fill_manual(values = setNames(rectDf$fillC, rectDf$state), name = "State") +
+              
               geom_histogram(aes(y = after_stat(density)), fill = "darkgrey", color = "grey35", bins = 50) + #  binwidth = 1
               geom_density(fill = "#69b3a2", color = "lightgrey", alpha = 0.4)
               # geom_histogram(aes(y = ..density..), fill = "darkgrey", color = "grey35")+ # bins = 30
@@ -279,16 +332,17 @@ source("Scripts/00_Initialisation.R")
                 comp_colors <- setNames(scales::hue_pal()(length(components)), components)
                 
                 p <- p +
-                geom_line(data = dens_total,
-                        aes(x = x, y = density),
-                        linewidth = 1.1, color = "black", alpha = 0.9) +
-                geom_area(data = dens_df, aes(x = x, y = density, fill = component), alpha = 0.3) +
-                geom_line(data = dens_df,
-                          aes(x = x, y = density, color = component),
-                          linewidth = 0.7, alpha = 0.6, show.legend = TRUE) +
-                geom_segment(data = vlineGMM, aes(x = ThresholdsGMM, xend = ThresholdsGMM, y = 0, yend = max(density(x)$y), linetype = "Mixture boundaries", color = "Mixture boundaries"), linewidth = 0.7, inherit.aes = FALSE)
-                # geom_segment(data = vlineGMM, aes(x = ThresholdsGMM, xend = ThresholdsGMM, y = 0, yend = max(5)), linetype = "dashed", linewidth = 0.7, color = "lightblue")
-                # geom_vline(xintercept = as.numeric(resAll[1,2:nbState+1]), linetype = "dashed", linewidth = 0.7, color = "lightblue", alpha = 0.7)
+                  ggnewscale::new_scale_fill() +
+                  geom_line(data = dens_total,
+                          aes(x = x, y = density),
+                          linewidth = 1.1, color = "black", alpha = 0.9) +
+                  geom_area(data = dens_df, aes(x = x, y = density, fill = component), alpha = 0.2) +
+                  geom_line(data = dens_df,
+                            aes(x = x, y = density, color = component),
+                            linewidth = 0.7, alpha = 0.9, show.legend = TRUE) 
+                  # geom_segment(data = vlineGMM, aes(x = ThresholdsGMM, xend = ThresholdsGMM, y = 0, yend = max(density(x)$y), linetype = "Mixture boundaries", color = "Mixture boundaries"), linewidth = 0.7, inherit.aes = FALSE)
+                  # geom_segment(data = vlineGMM, aes(x = ThresholdsGMM, xend = ThresholdsGMM, y = 0, yend = max(5)), linetype = "dashed", linewidth = 0.7, color = "lightblue")
+                  # geom_vline(xintercept = as.numeric(resAll[1,2:nbState+1]), linetype = "dashed", linewidth = 0.7, color = "lightblue", alpha = 0.7)
                 
                 
               }else{
@@ -302,16 +356,16 @@ source("Scripts/00_Initialisation.R")
             # Legend 
               # Base mapping: always include Quantiles
               color_values <- c("Quantiles" = "red",
-                                "Mixture boundaries" = "lightblue",
+                                # "Mixture boundaries" = "lightblue",
                                 comp_colors)
               
-              linetype_values <- c("Quantiles" = "dashed",
-                                   "Mixture boundaries" = "dotdash")
+              linetype_values <- c("Quantiles" = "dashed") #,
+                                   # "Mixture boundaries" = "dotdash")
               
               # Component colors go in fill legend ONLY
               if (!is.null(model)) {
                 p <- p +
-                  scale_fill_manual(values = comp_colors, name = "Component") +
+                  # scale_fill_manual(values = comp_colors, name = "Component") +
                   scale_color_manual(values = color_values, guide = "none") +   # hide color legend
                   guides(
                     fill = guide_legend(
@@ -321,7 +375,8 @@ source("Scripts/00_Initialisation.R")
                   # Unified line legend
                   scale_linetype_manual(values = linetype_values, name = NULL) +
                   guides(
-                    linetype = guide_legend(order = 1, override.aes = list(shape = NA, linewidth = 1.2, color = color_values[c("Mixture boundaries", "Quantiles")]))
+                    # linetype = guide_legend(order = 1, override.aes = list(shape = NA, linewidth = 1.2, color = color_values[c("Mixture boundaries", "Quantiles")]))
+                    linetype = guide_legend(order = 1, override.aes = list(shape = NA, linewidth = 1.2, color = color_values[c("Quantiles")]))
                   ) +
                   labs(x = varName, y = "Density") +
                   theme_classic()
@@ -350,7 +405,7 @@ source("Scripts/00_Initialisation.R")
             
             print(p)
             
-            if(save == TRUE){
+            if(savePlot == TRUE){
               
               dir.create(savePath, showWarnings = FALSE)
               ggsave(filename = file.path(savePath, paste0("Thresholds_plot_",varName,".pdf")), plot = p, device = "pdf", width = 190, height = 150, units = "mm")
@@ -368,85 +423,257 @@ source("Scripts/00_Initialisation.R")
         rownames(resAllFinal) <- NULL
         resAllFinal$Variable <- gsub(".1","", resAllFinal$Variable)
         
+        # Remove GMM quantiles
+        resAllFinal <- resAllFinal[2,]
+        
         return(resAllFinal)
         
         
     } 
-  
-     
-  
-  
-  makeDDThresholds(coralRorc$RorcHCB, varName = "RorcHCB", nbState = 5, zeroState = TRUE, plot = TRUE, save = TRUE, savePath = file.path(pathPro, "Thresholds","General"))
-  makeDDThresholds(coralRorc$RorcHCO, varName = "RorcHCO", nbState = 5, zeroState = TRUE, plot = TRUE)
-  makeDDThresholds(coralRorc$RorcCoralRichness, varName = "RorcSR", nbState = 5, zeroState = TRUE, plot = TRUE)
-  makeDDThresholds(coralRorc$RorcHCM, varName = "RorcHCM", nbState = 5, zeroState = TRUE, plot = TRUE)
-  makeDDThresholds(coralRorc$RorcRC, varName = "RorcRC", nbState = 5, zeroState = TRUE, plot = TRUE)
-  makeDDThresholds(coralRorc$RorcCoralCover, varName = "RorcCC", nbState = 5, zeroState = TRUE, plot = TRUE)
-  
-  makeDDThresholds(fishRorc$RorcCorallivoreAbund, varName = "RorcCorallivores", nbState = 5, zeroState = TRUE, plot = TRUE)
-  makeDDThresholds(fishRorc$RorcFishRichness, varName = "RorcFishSR", nbState = 5, zeroState = TRUE, plot = TRUE)
-  makeDDThresholds(fishRorc$RorcCarnivoreAbund, varName = "RorcCarnivores", nbState = 5, zeroState = TRUE, plot = TRUE)
-  
-  makeDDThresholds(invRorc$RorcInvAbund, varName = "RorcInvAbund", nbState = 5, zeroState = TRUE, plot = TRUE)
-  makeDDThresholds(invRorc$RorcInvRichness, varName = "RorcInvSR", nbState = 5, zeroState = TRUE, plot = TRUE)
-  
-  
-  # CORAL
-  thresholdsCoral <- do.call(rbind, lapply(varNames, function(x, data = coralRorc) {
     
-    # x = varNames[1]
+       
+       
     
-    res <- makeDDThresholds(data[,x], varName = x, nbState = 5, zeroState = TRUE, plot = TRUE, save = TRUE, savePath = file.path(pathPro, "Thresholds","General"))
+    # Function tests
+    # makeDDThresholds(coralRorc$RorcHCB, varName = "RorcHCB", nbState = 5, zeroState = TRUE, plot = TRUE, savePlot = FALSE, savePath = file.path(pathPro, "Thresholds","General"))
+    makeDDThresholds(coralRorcMean$RorcHCB, varName = "RorcHCB", nbState = 5, zeroState = TRUE, plot = TRUE, savePlot = FALSE, savePath = file.path(pathPro, "Thresholds","General"))
     
-    return(res)
-  }
-  ))
+    # makeDDThresholds(coralRorc$RorcHCO, varName = "RorcHCO", nbState = 5, zeroState = TRUE, plot = TRUE)
+    makeDDThresholds(coralRorcMean$RorcHCO, varName = "RorcHCO", nbState = 5, zeroState = TRUE, plot = TRUE)
     
+    # makeDDThresholds(coralRorc$RorcCoralRichness, varName = "RorcSR", nbState = 5, zeroState = TRUE, plot = TRUE)
+    makeDDThresholds(coralRorcMean$RorcCoralRichness, varName = "RorcSR", nbState = 5, zeroState = TRUE, plot = TRUE)
     
-  
-  
-  
-  # FISH
-  
-  varNames <- colnames(fishRorc)[grep("Rorc", colnames(fishRorc))]
-  # varNames <- colnames(fishRorc)[grep("Rorc", colnames(fishRorc))]  
-  
-  
-  thresholdsFish <- do.call(rbind, lapply(varNames, function(x, data = fishRorc) {
+    # makeDDThresholds(coralRorc$RorcHCM, varName = "RorcHCM", nbState = 5, zeroState = TRUE, plot = TRUE)
+    makeDDThresholds(coralRorcMean$RorcHCM, varName = "RorcHCM", nbState = 5, zeroState = TRUE, plot = TRUE)
     
-    # x = varNames[1]
+    makeDDThresholds(coralRorc$RorcRC, varName = "RorcRC", nbState = 5, zeroState = TRUE, plot = TRUE)
+    makeDDThresholds(coralRorc$RorcCoralCover, varName = "RorcCC", nbState = 5, zeroState = TRUE, plot = TRUE)
     
-    res <- makeDDThresholds(data[,x], varName = x, nbState = 5, zeroState = TRUE, plot = TRUE, save = TRUE, savePath = file.path(pathPro, "Thresholds","General"))
+    makeDDThresholds(fishRorc$RorcCorallivoreAbund, varName = "RorcCorallivores", nbState = 5, zeroState = TRUE, plot = TRUE)
+    makeDDThresholds(fishRorc$RorcFishRichness, varName = "RorcFishSR", nbState = 5, zeroState = TRUE, plot = TRUE)
+    makeDDThresholds(fishRorc$RorcCarnivoreAbund, varName = "RorcCarnivores", nbState = 5, zeroState = TRUE, plot = TRUE)
     
-    return(res)
-  }
-  ))  
+    makeDDThresholds(invRorc$RorcInvAbund, varName = "RorcInvAbund", nbState = 5, zeroState = TRUE, plot = TRUE)
+    makeDDThresholds(invRorc$RorcInvRichness, varName = "RorcInvSR", nbState = 5, zeroState = TRUE, plot = TRUE)
+      
+      
+    # Compute Coral General Thresholds
+    thresholdsCoral <- do.call(rbind, lapply(varCoral, function(x, data = coralRorc) {
+      
+      # x = varNames[1]
+      
+      res <- makeDDThresholds(data[,x], varName = x, nbState = 5, zeroState = TRUE, plot = TRUE, savePlot = TRUE, savePath = file.path(pathPro, "Thresholds","General"))
+      
+      return(res)
+    }
+    ))
+      
     
+    # Compute Fish General Thresholds
+    thresholdsFish <- do.call(rbind, lapply(varFish, function(x, data = fishRorc) {
+      
+      # x = varNames[1]
+      
+      res <- makeDDThresholds(data[,x], varName = x, nbState = 5, zeroState = TRUE, plot = TRUE, savePlot = TRUE, savePath = file.path(pathPro, "Thresholds","General"))
+      
+      return(res)
+    }
+    ))  
+      
+      
+    # Compute Invertebrates Thresholds 
     
-    
-    
-  # Invertebrates
-  
-  varNames <- colnames(invRorc)[grep("Rorc", colnames(invRorc))]
-  # varNames <- colnames(fishRorc)[grep("Rorc", colnames(fishRorc))]  
-  
-  
-  thresholdsInv <- do.call(rbind, lapply(varNames, function(x, data = invRorc) {
-    
-    # x = varNames[1]
-    
-    res <- makeDDThresholds(data[,x], varName = x, nbState = 5, zeroState = TRUE, plot = TRUE, save = TRUE, savePath = file.path(pathPro, "Thresholds","General"))
-    
-    return(res)
-  }
-  ))  
-  
-  
-  thresholdsGeneral <- rbind(thresholdsCoral, thresholdsFish, thresholdsInv)
-  
-  write.csv(thresholdsGeneral, file = file.path(pathPro, "Thresholds","Thresholds_General_DD.csv"), row.names = FALSE)
+    thresholdsInv <- do.call(rbind, lapply(varInv, function(x, data = invRorc) {
+      
+      # x = varNames[1]
+      
+      res <- makeDDThresholds(data[,x], varName = x, nbState = 5, zeroState = TRUE, plot = TRUE, savePlot = TRUE, savePath = file.path(pathPro, "Thresholds","General"))
+      
+      return(res)
+    }
+    ))  
     
     
+    thresholdsGeneral <- rbind(thresholdsCoral, thresholdsFish, thresholdsInv)
+    
+    write.csv(thresholdsGeneral, file = file.path(pathPro, "Thresholds","Thresholds_General_DD.csv"), row.names = FALSE)
+    
+    
+    # eo general thresholds ----
+    
+    
+    
+  # LOCAL THRESHOLDS
+    
+    # Use the same function but station wise to extract local indicators of evolution
+    # States here are more "Degrading, "intermediate/stable, Increasing"
+    
+    # In fact its simple for this one : only check value of previous year and consider if it is going back up or stagnating or going down
+    
+    
+    # Go see the code back in the trash
+    
+    # Take the GMM and force 3 states to identify 3 different groups as firstly thought (no quantiles on modes)
+    
+    # # Function to apply each variable to establish a state
+    # 
+    # 
+    # # Gaussian mixture models :
+    # # A data driven way to find thresholds based on each station temporal series.
+    # # Gaussian because its the most instinctive distribution
+    # # However it is a choice not to pick another distribution
+    # # The zero inflated data may bias or deserve another distribution but we'll roll with this "standard" for now and see how it works
+    # # Ecologically relevant, works.
+    # # A bit quirky because it doesn't consider bound data (notably here cover 0-100) so zero inflated will go in negatives
+    # # However, since we're looking at mode means, they cannot be negative and should stay relevant
+    
+    createStates <- function(x, data, by){
+
+      # TEST ZONE
+      x = "RorcHCB"
+      data = coralRorcMean
+
+      # x = "RorcCarnivoreAbund"
+      # x = "RorcFishRichness"
+      # data = fishRorc
+
+      by = c("Year","Station")
+      # eo test zone
+
+      # Extracting the data
+      df <- data[,c(by,x)]
+
+      # Converting to numeric as a safe quality check (to convert integers to numeric)
+      df[[x]] <- as.numeric(df[[x]])
+      
+      # Keep only positive data
+      df <- df[df[[x]] > 0,]
+
+      # Log transform
+      # df[[x]] <- log(df[[x]])
+      
+
+      # lapply function to rbind all station chunks after being individually evaluated for state generation
+      df1 <- do.call(rbind, lapply(unique(df$Station), function(y) {
+        # Test zone
+        # y = "mbere"
+        # y = "mwaremwa"
+        # y = "kanga_daa"
+        y = "bancs_du_nord"
+        # y = "koe"
+        # y = "lekiny"
+        # eo test zone
+
+        print(y)
+
+        # Extracting the station dataset chunk
+        test <- df[df$Station == y,]
+        # test <- df
+
+
+        # Need to check for zeros or very low values
+        if(sum(test[[x]]) %in% c(0:1)){
+          # If only zeros, apply basic thresholds that will only go to positive values
+          # 0% Low
+          # 0-30% medium
+          # > 30% = High
+          # To do in the future : take the threshold of the closest station ?
+
+          # 2 thresholds
+          test$classification <- NA
+          test$classification[test[[x]] == 0] <- "Low"
+          test$classification[test[[x]] > 0 & test[[x]] < 30] <- "Intermediate"
+          test$classification[test[[x]] >= 30] <- "High"
+          test$classification <- factor(test$classification, levels = c("High","Intermediate","Low"))
+
+
+        }else{
+
+          # Mixture Model to identify multiple gaussian modes
+          model <- Mclust(test[[x]])
+
+          # Get state thresholds
+          # If there is no mode resolution (too few data) we refer to the closest station ?
+          # If there is only one mode, we chose the data quartiles
+          # If there are more than two modes, keep the two extremes and leave the middle to "normal/medium/transitory" state
+          if(is.null(model$G)){
+            # To change to a warning with manual thresholds
+            stop("Gaussian mixture model is null, no solution found. Potentially not enough data.")
+
+          }else{
+            if(model$G == 1) {
+              # Take the quantile method
+              # HOWEVER : make a small adaptation to the number of observation. Notably if there is few data, don't let outliers become the norm
+              # Example with RorcHCB on koe (8 observations in total over 2 years (4 transects)). There are 4 zeros, 3 2.5 and one 5.
+              # With 0.33-0.66, no values are considered "Normal". Although one could say 2.5 is normal, zero is not, 5 is high
+              # So if we have few observation, let's say less than 5 years (20 observations over 4 transects), we use extremes 5% on each side and leave the 95% in "normal"
+              # for consistent data, we use 1/3 and 2/3 quantiles OR 1/4 - 3/4
+              # After some tests, values are too close one to another to exert the 1/3 or 1/4. Let's try and stick to extremes only
+              # if(length(test[[x]]) > 20) {
+              #   thres <- quantile(test[[x]], probs = c(0.25, 0.75))
+              # } else {
+              thres <- quantile(test[[x]], probs = c(0.025, 0.975))
+              # }
+
+            }
+
+            if(model$G > 1) {
+              # Take the first and last mode means as thresholds and keep all intermediate potential distributions in intermediate
+              thres <- c(first(model$parameters$mean), last(model$parameters$mean))
+            }
+          }
+          
+          # Convert back to raw values
+          # thres <- exp(thres)
+
+          
+          
+          
+
+          # 2 thresholds
+          test$classification <- NA
+          test$classification[test[[x]] <= thres[1]] <- "Low"
+          test$classification[test[[x]] > thres[1] & test[[x]] < thres[2]] <- "Intermediate"
+          test$classification[test[[x]] >= thres[2]] <- "High"
+          test$classification <- factor(test$classification, levels = c("High","Intermediate","Low"))
+          
+          ggplot(data = test, aes(x = Year, y = !!sym(x), group = 1))+
+            geom_path() +
+            geom_point(aes(color = classification)) +
+            scale_color_manual(values = c("#009E73","#56B4E9","#D55E00"), drop = FALSE) +
+            facet_wrap(.~Station) +
+            geom_hline(yintercept = thres[1], linetype = "dashed", linewidth = 0.1) +
+            geom_hline(yintercept = thres[2], linetype = "dashed", linewidth = 0.1) +
+            theme_classic()
+          
+          
+
+        }
+
+        return(test)
+
+      }))
+
+
+      return(df1)
+
+
+
+    }
+
+    res <- createStates(x = "RorcHCB", data = coralRorc, by = c("Year","Station", "Sample"))
+
+  
+  
+    
+    
+    
+    
+    
+  
+  
+  
 # TRASH ----
   
   
@@ -998,7 +1225,7 @@ source("Scripts/00_Initialisation.R")
   #   geom_path() +
   #   geom_point(aes(color = classification)) +
   #   scale_color_manual(values = c("#009E73","#56B4E9","#D55E00"), drop = FALSE) +
-  #   facet_wrap(.~Sample) +
+  #   facet_wrap(.~Station) +
   #   geom_hline(yintercept = thres[1], linetype = "dashed", linewidth = 0.1) +
   #   geom_hline(yintercept = thres[2], linetype = "dashed", linewidth = 0.1) +
   #   theme_classic()

@@ -31,6 +31,7 @@ dir.create(file.path("Data","Species"), showWarnings = FALSE)
 # if (!require("plyr")) install.packages("plyr")
 if (!require("dplyr")) install.packages("dplyr")
 if (!require("ggplot2")) install.packages("ggplot2")
+if (!require("ggnewscale")) install.packages("ggnewscale")
 # if (!require("ggrepel")) install.packages("ggrepel")
 # if (!require("ggsignif")) install.packages("ggsignif")
 
