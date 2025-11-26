@@ -47,7 +47,8 @@ if(init1 == "01_Data_To_States.R") {
   # This package will install pretty much all other needed packages for SIG processing
   if (!require("brms")) install.packages("brms")
   if (!require("mclust")) install.packages("mclust")
-  # if (!require("gamlss")) install.packages("gamlss")
+  if (!require("purrr")) install.packages("purrr")
+  # if (!require("Kendall")) install.packages("Kendall")
   # if (!require("traveltime")) install.packages("traveltime", repos = c("https://idem-lab.r-universe.dev"))
   # if (!require("mapsapi")) install.packages("mapsapi")
   # if (!require("rSDM")) install.packages("rSDM", repos = c("https://pakillo.r-universe.dev", "https://cloud.r-project.org"))

@@ -61,7 +61,7 @@ source("Scripts/00_Initialisation.R")
   
   # eo read data ----
   
-# PROCESS ----
+# PREPARE DATA ----
   
   # Identify variables
   varCoral <- colnames(coralRorc)[grep("Rorc", colnames(coralRorc))]  
@@ -70,25 +70,36 @@ source("Scripts/00_Initialisation.R")
   
   # Aggregate datasets to their means per station
   # Aggregate by station
+  # mean Coral
   coralRorcMean <- coralRorc %>%
     select(-Sample) %>%           # drop the transect column
     group_by(Year, Country, Region, Sector, Site, Station) %>%   # your metadata columns
     summarise(across(all_of(varCoral), mean), .groups = "drop")
-  
-  # coralRorcSD <- coralRorc %>%
-  #   select(-Sample) %>%           # drop the transect column
-  #   group_by(Year, Country, Region, Sector, Site, Station) %>%   # your metadata columns
-  #   summarise(across(all_of(varCoral), sd), .groups = "drop")
+  # Sd coral (for station wise thresholds later)
+  coralRorcSD <- coralRorc %>%
+    select(-Sample) %>%           # drop the transect column
+    group_by(Year, Country, Region, Sector, Site, Station) %>%   # your metadata columns
+    summarise(across(all_of(varCoral), sd), .groups = "drop")
   
   fishRorcMean <- fishRorc %>%
     select(-Sample) %>%           # drop the transect column
     group_by(Year, Country, Region, Sector, Site, Station) %>%   # your metadata columns
     summarise(across(all_of(varFish), mean), .groups = "drop")
+  # Sd coral 
+  fishRorcSD <- fishRorc %>%
+    select(-Sample) %>%           # drop the transect column
+    group_by(Year, Country, Region, Sector, Site, Station) %>%   # your metadata columns
+    summarise(across(all_of(varFish), sd), .groups = "drop")
   
   invRorcMean <- invRorc %>%
     select(-Sample) %>%           # drop the transect column
     group_by(Year, Country, Region, Sector, Site, Station) %>%   # your metadata columns
     summarise(across(all_of(varInv), mean), .groups = "drop")
+  # Sd coral 
+  invRorcSD <- invRorc %>%
+    select(-Sample) %>%           # drop the transect column
+    group_by(Year, Country, Region, Sector, Site, Station) %>%   # your metadata columns
+    summarise(across(all_of(varInv), sd), .groups = "drop")
   
   
 # GENERAL THRESHOLD ----
@@ -104,6 +115,8 @@ source("Scripts/00_Initialisation.R")
   # Make it threshold number variable
   # (Export two files : "_GMM" for mixture models and "_QTLS" for quantiles)
   # 
+  
+  # Create Thresholds and save them
   
     # Function
     makeDDThresholds <- function(x, nbState, zeroState = TRUE, plot = TRUE, varName = "Variable", savePlot = FALSE, savePath){
@@ -426,13 +439,20 @@ source("Scripts/00_Initialisation.R")
         # Remove GMM quantiles
         resAllFinal <- resAllFinal[2,]
         
+        # Add final warning column if duplicated values between states of a same variable
+        resAllFinal <- resAllFinal %>%
+          rowwise() %>% 
+          mutate(
+            warning = if(any(duplicated(c_across(State1:last_col())))) "Warning" else NA
+          ) %>%
+          ungroup()
+        
+        
         return(resAllFinal)
         
         
     } 
     
-       
-       
     
     # Function tests
     # makeDDThresholds(coralRorc$RorcHCB, varName = "RorcHCB", nbState = 5, zeroState = TRUE, plot = TRUE, savePlot = FALSE, savePath = file.path(pathPro, "Thresholds","General"))
@@ -447,8 +467,9 @@ source("Scripts/00_Initialisation.R")
     # makeDDThresholds(coralRorc$RorcHCM, varName = "RorcHCM", nbState = 5, zeroState = TRUE, plot = TRUE)
     makeDDThresholds(coralRorcMean$RorcHCM, varName = "RorcHCM", nbState = 5, zeroState = TRUE, plot = TRUE)
     
-    makeDDThresholds(coralRorc$RorcRC, varName = "RorcRC", nbState = 5, zeroState = TRUE, plot = TRUE)
-    makeDDThresholds(coralRorc$RorcCoralCover, varName = "RorcCC", nbState = 5, zeroState = TRUE, plot = TRUE)
+    makeDDThresholds(coralRorcMean$RorcRC, varName = "RorcRC", nbState = 5, zeroState = TRUE, plot = TRUE)
+    
+    makeDDThresholds(coralRorcMean$RorcCoralCover, varName = "RorcCC", nbState = 5, zeroState = TRUE, plot = TRUE)
     
     makeDDThresholds(fishRorc$RorcCorallivoreAbund, varName = "RorcCorallivores", nbState = 5, zeroState = TRUE, plot = TRUE)
     makeDDThresholds(fishRorc$RorcFishRichness, varName = "RorcFishSR", nbState = 5, zeroState = TRUE, plot = TRUE)
@@ -499,17 +520,159 @@ source("Scripts/00_Initialisation.R")
     
     write.csv(thresholdsGeneral, file = file.path(pathPro, "Thresholds","Thresholds_General_DD.csv"), row.names = FALSE)
     
+  # Assign Thresholds to data and export new csv to be read for hierarchical model construction
+    
+    thdGeneral <- read.csv(file.path(pathPro, "Thresholds","Thresholds_General_DD.csv"))
+    thdGeneralStates <- c("Zero","Low","Medium","Good","Very_Good")
+    colnames(thdGeneral)[3:(length(colnames(thdGeneral))-1)] <- thdGeneralStates
+    
+    # Uniform Function to assign between different datasets
+    assignDDThresholds <- function(colname, data, thds){
+      
+      # data = coralRorcMean
+      # colname = "RorcHCB"
+      # thds = thdGeneral
+      
+      val <- data[[colname]] 
+      thd <- thds[thds$Variable == colname,]
+      
+      res <- character(length = length(val))
+      res[val == thd$Zero] <- "Zero"
+      res[val > thd$Zero & val <= thd$Low] <- "Low"
+      res[val > thd$Low & val <= thd$Medium] <- "medium"
+      res[val > thd$Medium & val <= thd$Good] <- "Good"
+      res[val > thd$Good] <- "Very_Good"
+      
+      return(res)
+      
+    }
+    
+    # create/duplicate dataset to be filled by states 
+    coralRorcGeneralStates <- coralRorcMean
+    fishRorcGeneralStates <- fishRorcMean
+    invRorcGeneralStates <- invRorcMean
+    
+    
+    coralRorcGeneralStates[varCoral] <- lapply(varCoral, assignDDThresholds, data = coralRorcMean, thds = thdGeneral)
+    
+    fishRorcGeneralStates[varFish] <- lapply(varFish, assignDDThresholds, data = fishRorcMean, thds = thdGeneral)
+    
+    invRorcGeneralStates[varInv] <- lapply(varInv, assignDDThresholds, data = invRorcMean, thds = thdGeneral)
+    
+    # Write to csv
+    write.csv(coralRorcGeneralStates, file = file.path(pathPro,"RORC_Coral_States_hdbn.csv"), row.names = FALSE)
+    write.csv(fishRorcGeneralStates, file = file.path(pathPro,"RORC_Fish_States_hdbn.csv"), row.names = FALSE)
+    write.csv(invRorcGeneralStates, file = file.path(pathPro,"RORC_Inv_States_hdbn.csv"), row.names = FALSE)
+    
+    
     
     # eo general thresholds ----
     
     
     
+    
+    
+    
   # LOCAL THRESHOLDS
     
-    # Use the same function but station wise to extract local indicators of evolution
-    # States here are more "Degrading, "intermediate/stable, Increasing"
-    
+    # States here are more "Degrading, "Stagnating, Recovering"
     # In fact its simple for this one : only check value of previous year and consider if it is going back up or stagnating or going down
+    # But, to make it robust, we can do a few things :
+    # 
+    
+
+    # station_df must contain columns: Site, Station, Year, value (numeric)
+    # k_recent = number of last years to average (k_recent = 1 => last year only)
+    # k_prev   = number of previous years to average (k_prev = 1 => previous year only)
+    assign_trend_window_safe <- function(station_df,
+                                         k_recent = 1,
+                                         k_prev = 1,
+                                         pct_threshold = 0.10,
+                                         sd_multiplier = 0.5,
+                                         min_tp = 3,
+                                         small = 1e-6) {
+      
+      # Test zone
+      station_df = 
+      
+      # Pre-aggregate to ensure one value per Year if needed (assume it is already)
+      station_df <- station_df %>% arrange(Year)
+      
+      # require at least min_tp years
+      if (nrow(station_df) < min_tp) {
+        return(tibble(
+          Site = unique(station_df$Site),
+          Station = unique(station_df$Station),
+          n_tp = nrow(station_df),
+          pct_change = NA_real_,
+          log_ratio = NA_real_,
+          hist_sd = NA_real_,
+          Trend = NA_character_
+        ))
+      }
+      
+      vals <- station_df$value
+      yrs  <- station_df$Year
+      n <- length(vals)
+      
+      # define recent window and previous window indices
+      recent_idx <- seq(max(1, n - k_recent + 1), n)
+      prev_idx   <- seq(max(1, n - k_recent - k_prev + 1), max(1, n - k_recent))
+      
+      # if prev window empty (e.g., too short), fallback to use earlier single year or NA
+      if (length(prev_idx) == 0) {
+        prev_idx <- max(1, n - 1)
+      }
+      
+      recent_vals <- vals[recent_idx]
+      prev_vals   <- vals[prev_idx]
+      
+      # compute statistics
+      recent_mean <- mean(recent_vals, na.rm = TRUE)
+      prev_mean   <- mean(prev_vals, na.rm = TRUE)
+      
+      # percent change (safe)
+      denom <- ifelse(prev_mean == 0, max(median(vals[vals>0], na.rm = TRUE) * small, small), prev_mean)
+      pct_change <- (recent_mean - prev_mean) / denom
+      
+      # log ratio (robust to zeros)
+      log_ratio <- log1p(recent_mean) - log1p(prev_mean)
+      
+      # historical variability on log scale (exclude the very recent window optionally)
+      hist_vals_log <- log1p(vals[1:max(1, n - k_recent)])  # baseline variability excluding recent
+      hist_sd <- ifelse(length(hist_vals_log) <= 1, sd(log1p(vals)), sd(hist_vals_log, na.rm = TRUE))
+      hist_sd <- ifelse(is.na(hist_sd) || hist_sd == 0, 0, hist_sd)
+      
+      # decision rule
+      is_up   <- (pct_change > pct_threshold) & (log_ratio > 0) & (abs(log_ratio) >= sd_multiplier * hist_sd)
+      is_down <- (pct_change < -pct_threshold) & (log_ratio < 0) & (abs(log_ratio) >= sd_multiplier * hist_sd)
+      
+      Trend <- if (is_up) {
+        "Recovering"
+      } else if (is_down) {
+        "Degrading"
+      } else {
+        "Stable"
+      }
+      
+      tibble(
+        Site = unique(station_df$Site),
+        Station = unique(station_df$Station),
+        n_tp = n,
+        recent_mean = recent_mean,
+        prev_mean = prev_mean,
+        pct_change = pct_change,
+        log_ratio = log_ratio,
+        hist_sd = hist_sd,
+        Trend = Trend
+      )
+    }
+    
+    
+    
+    
+    
+    
     
     
     # Go see the code back in the trash
@@ -633,10 +796,10 @@ source("Scripts/00_Initialisation.R")
 
           # 2 thresholds
           test$classification <- NA
-          test$classification[test[[x]] <= thres[1]] <- "Low"
-          test$classification[test[[x]] > thres[1] & test[[x]] < thres[2]] <- "Intermediate"
-          test$classification[test[[x]] >= thres[2]] <- "High"
-          test$classification <- factor(test$classification, levels = c("High","Intermediate","Low"))
+          test$classification[test[[x]] <= thres[1]] <- "Degrading"
+          test$classification[test[[x]] > thres[1] & test[[x]] < thres[2]] <- "Stable"
+          test$classification[test[[x]] >= thres[2]] <- "Recovering"
+          test$classification <- factor(test$classification, levels = c("Recovering","Stable","Degrading"))
           
           ggplot(data = test, aes(x = Year, y = !!sym(x), group = 1))+
             geom_path() +
@@ -675,7 +838,25 @@ source("Scripts/00_Initialisation.R")
   
   
 # TRASH ----
-  
+    
+    # coralRorcGeneralStates[varCoral] <- lapply(varCoral, function(x){
+    #   
+    #   # x = varCoral[1]
+    #   
+    #   val <- coralRorcMean[[x]] 
+    #   thd <- thdGeneral[thdGeneral$Variable == x,]
+    #   
+    #   res <- character(length = length(val))
+    #   res[val == thd$Zero] <- "Zero"
+    #   res[val > thd$Zero & val <= thd$Low] <- "Low"
+    #   res[val > thd$Low & val <= thd$Medium] <- "medium"
+    #   res[val > thd$Medium & val <= thd$Good] <- "Good"
+    #   res[val > thd$Good] <- "Very_Good"
+    #   
+    #   return(res)
+    #   
+    # })
+    
   
   
   
