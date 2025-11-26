@@ -72,30 +72,45 @@ source("Scripts/00_Initialisation.R")
   # Aggregate by station
   # mean Coral
   coralRorcMean <- coralRorc %>%
-    select(-Sample) %>%           # drop the transect column
+    # select(-Sample) %>%           # drop the transect column
     group_by(Year, Country, Region, Sector, Site, Station) %>%   # your metadata columns
-    summarise(across(all_of(varCoral), mean), .groups = "drop")
+    summarise(
+      n_samples = n_distinct(Sample),
+      across(all_of(varCoral), mean),
+      .groups = "drop"
+      )
+  
   # Sd coral (for station wise thresholds later)
   coralRorcSD <- coralRorc %>%
     select(-Sample) %>%           # drop the transect column
     group_by(Year, Country, Region, Sector, Site, Station) %>%   # your metadata columns
     summarise(across(all_of(varCoral), sd), .groups = "drop")
   
+  # mean Fish
   fishRorcMean <- fishRorc %>%
-    select(-Sample) %>%           # drop the transect column
+    # select(-Sample) %>%           # drop the transect column
     group_by(Year, Country, Region, Sector, Site, Station) %>%   # your metadata columns
-    summarise(across(all_of(varFish), mean), .groups = "drop")
-  # Sd coral 
+    summarise(
+      n_samples = n_distinct(Sample),
+      across(all_of(varFish), mean),
+      .groups = "drop"
+    )
+  # Sd Fish 
   fishRorcSD <- fishRorc %>%
     select(-Sample) %>%           # drop the transect column
     group_by(Year, Country, Region, Sector, Site, Station) %>%   # your metadata columns
     summarise(across(all_of(varFish), sd), .groups = "drop")
   
+  # Mean Inv
   invRorcMean <- invRorc %>%
-    select(-Sample) %>%           # drop the transect column
+    # select(-Sample) %>%           # drop the transect column
     group_by(Year, Country, Region, Sector, Site, Station) %>%   # your metadata columns
-    summarise(across(all_of(varInv), mean), .groups = "drop")
-  # Sd coral 
+    summarise(
+      n_samples = n_distinct(Sample),
+      across(all_of(varInv), mean),
+      .groups = "drop"
+    )
+  # Sd Inv 
   invRorcSD <- invRorc %>%
     select(-Sample) %>%           # drop the transect column
     group_by(Year, Country, Region, Sector, Site, Station) %>%   # your metadata columns
@@ -584,91 +599,128 @@ source("Scripts/00_Initialisation.R")
     # station_df must contain columns: Site, Station, Year, value (numeric)
     # k_recent = number of last years to average (k_recent = 1 => last year only)
     # k_prev   = number of previous years to average (k_prev = 1 => previous year only)
-    assign_trend_window_safe <- function(station_df,
-                                         k_recent = 1,
-                                         k_prev = 1,
-                                         pct_threshold = 0.10,
-                                         sd_multiplier = 0.5,
-                                         min_tp = 3,
-                                         small = 1e-6) {
+    assign_trend_balanced <- function(st_year_df,
+                                      st_year_df_sd,
+                                      varName,
+                                      k_recent = 1,
+                                      k_prev = 1,
+                                      pct_threshold = 0.20,      # 20% change
+                                      log_threshold = 0.20,      # ~20% multiplicative
+                                      se_multiplier = 1.1,       # 1.1 × SE
+                                      min_tp = 3,
+                                      small = 1e-6) {
       
-      # Test zone
-      station_df = 
+      # st_year_df = coralRorcMean[coralRorcMean$Station == "casy",]
+      # st_year_df_sd = coralRorcSD[coralRorcSD$Station == "casy",]
+      # varName = "RorcHCB"
+      # varName = "RorcCoralRichness"
+      # k_recent = 1
+      # k_prev = 1
+      # pct_threshold = 0.50     # 10% change
+      # log_threshold = 0.50      # ~10% multiplicative
+      # se_multiplier = 1.1      # 1 × SE
+      # min_tp = 3
+      # small = 1e-6
       
-      # Pre-aggregate to ensure one value per Year if needed (assume it is already)
-      station_df <- station_df %>% arrange(Year)
+      # Simple check just in case
+      # must have columns: Site, Station, Year, mean_value, sd_value, n_samples
+      st_year_df <- st_year_df %>% arrange(Year)
+      st_year_df_sd <- st_year_df_sd %>% arrange(Year)
       
-      # require at least min_tp years
-      if (nrow(station_df) < min_tp) {
+      if (nrow(st_year_df) < min_tp) {
         return(tibble(
-          Site = unique(station_df$Site),
-          Station = unique(station_df$Station),
-          n_tp = nrow(station_df),
+          Site = unique(st_year_df$Site),
+          Station = unique(st_year_df$Station),
+          Variable = varName,
+          Trend = NA_character_,
           pct_change = NA_real_,
           log_ratio = NA_real_,
-          hist_sd = NA_real_,
-          Trend = NA_character_
+          delta = NA_real_,
+          SE_delta = NA_real_,
+          reason = NA_character_
         ))
       }
       
-      vals <- station_df$value
-      yrs  <- station_df$Year
-      n <- length(vals)
+      # extract vectors
+      vals <- st_year_df[[varName]]
+      sds  <- st_year_df_sd[[varName]]
+      ns   <- st_year_df$n_samples
+      yrs  <- st_year_df$Year
+      n    <- length(vals)
       
-      # define recent window and previous window indices
+      # define windows
       recent_idx <- seq(max(1, n - k_recent + 1), n)
       prev_idx   <- seq(max(1, n - k_recent - k_prev + 1), max(1, n - k_recent))
       
-      # if prev window empty (e.g., too short), fallback to use earlier single year or NA
-      if (length(prev_idx) == 0) {
-        prev_idx <- max(1, n - 1)
-      }
+      # fallback if too short
+      if (length(prev_idx) == 0) prev_idx <- max(1, n - 1)
       
-      recent_vals <- vals[recent_idx]
-      prev_vals   <- vals[prev_idx]
+      # compute means
+      recent_mean <- mean(vals[recent_idx], na.rm = TRUE)
+      prev_mean   <- mean(vals[prev_idx], na.rm = TRUE)
       
-      # compute statistics
-      recent_mean <- mean(recent_vals, na.rm = TRUE)
-      prev_mean   <- mean(prev_vals, na.rm = TRUE)
+      # compute SE of difference
+      recent_var <- mean((sds[recent_idx]^2) / pmax(ns[recent_idx], 1), na.rm = TRUE)
+      prev_var   <- mean((sds[prev_idx]^2) / pmax(ns[prev_idx], 1),   na.rm = TRUE)
       
-      # percent change (safe)
-      denom <- ifelse(prev_mean == 0, max(median(vals[vals>0], na.rm = TRUE) * small, small), prev_mean)
+      SE_delta <- sqrt(recent_var + prev_var)
+      
+      # percent change
+      denom <- ifelse(prev_mean == 0,
+                      max(median(vals[vals>0], na.rm = TRUE) * small, small),
+                      prev_mean)
+      
       pct_change <- (recent_mean - prev_mean) / denom
       
-      # log ratio (robust to zeros)
+      # log-ratio
       log_ratio <- log1p(recent_mean) - log1p(prev_mean)
       
-      # historical variability on log scale (exclude the very recent window optionally)
-      hist_vals_log <- log1p(vals[1:max(1, n - k_recent)])  # baseline variability excluding recent
-      hist_sd <- ifelse(length(hist_vals_log) <= 1, sd(log1p(vals)), sd(hist_vals_log, na.rm = TRUE))
-      hist_sd <- ifelse(is.na(hist_sd) || hist_sd == 0, 0, hist_sd)
+      # raw difference
+      delta <- recent_mean - prev_mean
       
-      # decision rule
-      is_up   <- (pct_change > pct_threshold) & (log_ratio > 0) & (abs(log_ratio) >= sd_multiplier * hist_sd)
-      is_down <- (pct_change < -pct_threshold) & (log_ratio < 0) & (abs(log_ratio) >= sd_multiplier * hist_sd)
+      # --- decision gates -----------------------------------------------
+      gate_pct <- abs(pct_change) >= pct_threshold
       
-      Trend <- if (is_up) {
-        "Recovering"
-      } else if (is_down) {
-        "Degrading"
-      } else {
-        "Stable"
-      }
+      gate_log <- abs(log_ratio) >= log_threshold
+      
+      gate_SE  <- abs(delta) >= se_multiplier * SE_delta
+      
+      is_up   <- (recent_mean > prev_mean) & (gate_pct | gate_log | gate_SE)
+      is_down <- (recent_mean < prev_mean) & (gate_pct | gate_log | gate_SE)
+      
+      Trend <- dplyr::case_when(
+        is_up   ~ "Increasing",
+        is_down ~ "Decreasing",
+        TRUE    ~ "Stable"
+      )
+      
+      reason <- paste(
+        c(
+          if (gate_pct) "pct" else NULL,
+          if (gate_log) "log" else NULL,
+          if (gate_SE)  "SE"  else NULL
+        ),
+        collapse = "+"
+      )
       
       tibble(
-        Site = unique(station_df$Site),
-        Station = unique(station_df$Station),
-        n_tp = n,
+        Site = unique(st_year_df$Site),
+        Station = unique(st_year_df$Station),
+        Variable = varName,
         recent_mean = recent_mean,
         prev_mean = prev_mean,
         pct_change = pct_change,
         log_ratio = log_ratio,
-        hist_sd = hist_sd,
-        Trend = Trend
+        delta = delta,
+        SE_delta = SE_delta,
+        Trend = Trend,
+        reason = ifelse(reason == "", "none", reason)
       )
     }
     
     
+    # Function per variable for all station
+    coralRorcStationTrends <- do.call(rbind, lapply())
     
     
     
