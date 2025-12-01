@@ -82,10 +82,13 @@ source("Scripts/00_Initialisation.R")
   
   # Sd coral (for station wise thresholds later)
   coralRorcSD <- coralRorc %>%
-    select(-Sample) %>%           # drop the transect column
     group_by(Year, Country, Region, Sector, Site, Station) %>%   # your metadata columns
-    summarise(across(all_of(varCoral), sd), .groups = "drop")
-  
+    summarise(
+      n_samples = n_distinct(Sample),
+      across(all_of(varCoral), sd),
+      .groups = "drop"
+    )
+
   # mean Fish
   fishRorcMean <- fishRorc %>%
     # select(-Sample) %>%           # drop the transect column
@@ -97,9 +100,13 @@ source("Scripts/00_Initialisation.R")
     )
   # Sd Fish 
   fishRorcSD <- fishRorc %>%
-    select(-Sample) %>%           # drop the transect column
+    # select(-Sample) %>%           # drop the transect column
     group_by(Year, Country, Region, Sector, Site, Station) %>%   # your metadata columns
-    summarise(across(all_of(varFish), sd), .groups = "drop")
+    summarise(
+      n_samples = n_distinct(Sample),
+      across(all_of(varFish), sd),
+      .groups = "drop"
+    )
   
   # Mean Inv
   invRorcMean <- invRorc %>%
@@ -112,9 +119,13 @@ source("Scripts/00_Initialisation.R")
     )
   # Sd Inv 
   invRorcSD <- invRorc %>%
-    select(-Sample) %>%           # drop the transect column
+    # select(-Sample) %>%           # drop the transect column
     group_by(Year, Country, Region, Sector, Site, Station) %>%   # your metadata columns
-    summarise(across(all_of(varInv), sd), .groups = "drop")
+    summarise(
+      n_samples = n_distinct(Sample),
+      across(all_of(varInv), sd),
+      .groups = "drop"
+    )
   
   
 # GENERAL THRESHOLD ----
@@ -533,7 +544,9 @@ source("Scripts/00_Initialisation.R")
     
     thresholdsGeneral <- rbind(thresholdsCoral, thresholdsFish, thresholdsInv)
     
+    # To be modified manually when there's warnings
     write.csv(thresholdsGeneral, file = file.path(pathPro, "Thresholds","Thresholds_General_DD.csv"), row.names = FALSE)
+    
     
   # Assign Thresholds to data and export new csv to be read for hierarchical model construction
     
@@ -554,7 +567,7 @@ source("Scripts/00_Initialisation.R")
       res <- character(length = length(val))
       res[val == thd$Zero] <- "Zero"
       res[val > thd$Zero & val <= thd$Low] <- "Low"
-      res[val > thd$Low & val <= thd$Medium] <- "medium"
+      res[val > thd$Low & val <= thd$Medium] <- "Medium"
       res[val > thd$Medium & val <= thd$Good] <- "Good"
       res[val > thd$Good] <- "Very_Good"
       
@@ -575,9 +588,9 @@ source("Scripts/00_Initialisation.R")
     invRorcGeneralStates[varInv] <- lapply(varInv, assignDDThresholds, data = invRorcMean, thds = thdGeneral)
     
     # Write to csv
-    write.csv(coralRorcGeneralStates, file = file.path(pathPro,"RORC_Coral_States_hdbn.csv"), row.names = FALSE)
-    write.csv(fishRorcGeneralStates, file = file.path(pathPro,"RORC_Fish_States_hdbn.csv"), row.names = FALSE)
-    write.csv(invRorcGeneralStates, file = file.path(pathPro,"RORC_Inv_States_hdbn.csv"), row.names = FALSE)
+    write.csv(coralRorcGeneralStates, file = file.path(pathPro,"RORC_Coral_Station_General_States_hdbn.csv"), row.names = FALSE)
+    write.csv(fishRorcGeneralStates, file = file.path(pathPro,"RORC_Fish_Station_General_States_hdbn.csv"), row.names = FALSE)
+    write.csv(invRorcGeneralStates, file = file.path(pathPro,"RORC_Inv_Station_General_States_hdbn.csv"), row.names = FALSE)
     
     
     
@@ -592,786 +605,1151 @@ source("Scripts/00_Initialisation.R")
     
     # States here are more "Degrading, "Stagnating, Recovering"
     # In fact its simple for this one : only check value of previous year and consider if it is going back up or stagnating or going down
-    # Permutational test of the mean between year x and year x-1 for each variable
-    # The function takes the values of a variable column from the dataframe at sample scale
-    # For each station, the function takes the whole temporal series and checks if there is enough data (2 series)
-    # It computes the sd of differences on the whole station's temporal series
-    # rbind Lapply in each station for each year, that runs the lmperm
-    # Check the significance, check the sd difference, if both are good
     
-    
-    assignDDStationTrends <- function(x, data, varNames){ # x is the station name
+    assign_trend_rules <- function(dfMean,
+                                   dfSD,
+                                   varName,
+                                   hist_mult = 1.0,       # multiplier for historical sd gate (single year)
+                                   se_mult = 1.0,         # multiplier for SE gate (single year)
+                                   cum_mult = 1.0,        # multiplier for hist_sd for cumulative gate
+                                   min_tp = 3,           # minimum years to attempt any classification
+                                   cum_window = 2        # how many consecutive diffs to accumulate (2 = t + t-1)
+    ) {
       
       # Test zone
-      x = "casy"
-      data = coralRorc
-      varNames = varCoral
-      
-      # Remember, the data should be structured at least with Year, Station and Samples outside the varNames
-      
-      # Extract the df
-      df <- data[data$Station == x,]
-      
-      # Run the function for each column of varNames
-      
-      df[varNames] <- lapply(function(y) {
-        # Test
-        y = "RorcHCB"
-        
-        df[,y]
-        
-        # Calculate whole temporal series historical relevance
-        # sd of difference between mean values
-        hist_sd_change <- sd(diff(vals), na.rm = TRUE)
-        if (is.na(hist_sd_change)) hist_sd_change <- 0
-        
-        effect_size <- abs(recent_mean - prev_mean)
-        effect_gate <- effect_size > (hist_mult * hist_sd_change)
-        
-        
-        
-        
-      })
-      
-      # Calculate the SD of differences for each variables
-      
-      # Lapply for each variable
-      
-      
-      
-      
-      #1. Temporal series sd
-      
-      
-      
-      
-      # 1. Create the window frames for each year observed and its t-1
-      recent_idx <- seq(max(1, n - k_recent + 1), n)
-      prev_idx   <- seq(max(1, n - k_recent - k_prev + 1),
-                        max(1, n - k_recent))
-      if (length(prev_idx) == 0) prev_idx <- max(1, n - 1)
-      
-      recent_vals <- vals[recent_idx]
-      prev_vals   <- vals[prev_idx]
-      recent_sds  <- sds[recent_idx]
-      prev_sds    <- sds[prev_idx]
-      
-      
-      
-    } 
-    
-    # Then I do call rbind so I can replicate it simply for each dataset
-    coralRorcStationTrends <- do.call(rbind, lapply(unique(coralRorc$Station), assignDDStationTrends, data = coralRorc, varNames = varCoral))
-    
-    
-    
-    # permutation test for difference in means (two-sample)
-    # Brute force
-    # perm_test_mean <- function(x, y, B = 2000, seed = 1) {
-    #   set.seed(seed)
-    #   obs <- mean(x, na.rm = TRUE) - mean(y, na.rm = TRUE)
-    #   pooled <- c(x, y)
-    #   n_x <- length(x)
-    #   diffs <- replicate(B, {
-    #     s <- sample(pooled, length(pooled), replace = FALSE)
-    #     mean(s[1:n_x], na.rm = TRUE) - mean(s[(n_x+1):length(pooled)], na.rm = TRUE)
-    #   })
-    #   p_two <- mean(abs(diffs) >= abs(obs))
-    #   list(stat = obs, p_perm = p_two)
-    # }
-    
-    # Lmperm
-    perm_p <- function(values_year_t, values_year_tm1) {
-      df <- tibble(
-        value = c(values_year_t, values_year_tm1),
-        year  = factor(c(rep("T", length(values_year_t)),
-                         rep("Tminus1", length(values_year_tm1))))
-      )
-      
-      fit <- lmp(value ~ year, data = df)
-      summary(fit)$coefficients["yearT", "Pr(Prob)"]
-    }
-    
-    
-    # ----------------------------------------------
-    # 2. Define rolling windows
-    # ----------------------------------------------
-    recent_idx <- seq(max(1, n - k_recent + 1), n)
-    prev_idx   <- seq(max(1, n - k_recent - k_prev + 1),
-                      max(1, n - k_recent))
-    if (length(prev_idx) == 0) prev_idx <- max(1, n - 1)
-    
-    recent_vals <- vals[recent_idx]
-    prev_vals   <- vals[prev_idx]
-    recent_sds  <- sds[recent_idx]
-    prev_sds    <- sds[prev_idx]
-    
-    recent_mean <- mean(recent_vals, na.rm = TRUE)
-    prev_mean   <- mean(prev_vals,   na.rm = TRUE)
-    
-    denom <- ifelse(prev_mean == 0,
-                    max(median(vals[vals>0], na.rm=TRUE) * small, small),
-                    prev_mean)
-    
-    pct_change <- (recent_mean - prev_mean) / denom
-    log_ratio  <- log1p(recent_mean) - log1p(prev_mean)
-    
-    # ----------------------------------------------
-    # 3. Permutation test via lmperm::lmp()
-    # ----------------------------------------------
-    perm_df <- tibble(
-      value = c(prev_vals, recent_vals),
-      year  = factor(c(rep("prev", length(prev_vals)),
-                       rep("recent", length(recent_vals))))
-    )
-    
-    perm_fit <- try(lmp(value ~ year, data = perm_df), silent = TRUE)
-    
-    perm_p <- if (inherits(perm_fit, "try-error")) {
-      NA_real_
-    } else {
-      summary(perm_fit)$coefficients["yearrecent", "Pr(Prob)"]
-    }
-    
-    
-    # ----------------------------------------------
-    # 4. Historical relevance gate
-    # ----------------------------------------------
-    hist_sd_change <- sd(diff(vals), na.rm = TRUE)
-    if (is.na(hist_sd_change)) hist_sd_change <- 0
-    
-    effect_size <- abs(recent_mean - prev_mean)
-    effect_gate <- effect_size > (hist_mult * hist_sd_change)
-    
-    
-    
-    
-    assign_trend_adaptive <- function(station_df,
-                                      station_df_sd,
-                                      varName,
-                                      k_recent = 1,
-                                      k_prev = 1,
-                                      pct_q = 0.70,
-                                      log_sd_mult = 0.5,
-                                      min_tp = 3,
-                                      p_thresh = 0.10,        # permutation p-value threshold
-                                      hist_mult = 0.5,        # historical-effect-size threshold multiplier
-                                      use_SE_gate = TRUE,     # optional
-                                      small = 1e-6) {
-      
-      # Test Zone
-      station_df = coralRorcMean[coralRorcMean$Station == "casy",]
-      station_df_sd = coralRorcSD[coralRorcSD$Station == "casy",]
-      varName = "RorcHCB"
-      k_recent = 1
-      k_prev = 1
-      pct_q = 0.70
-      log_sd_mult = 0.5
-      min_tp = 2
-      p_thresh = 0.10       # permutation p-value threshold
-      hist_mult = 0.5        # historical-effect-size threshold multiplier
-      use_SE_gate = TRUE     # optional
-      small = 1e-6
-      
-      
-      station_df <- station_df %>% arrange(Year)
-      station_df_sd <- station_df_sd %>% arrange(Year)
-      
-      vals <- station_df[[varName]]
-      sds  <- station_df_sd[[varName]]
-      yrs  <- station_df$Year
-      n    <- length(vals)
-      
-      if (n < min_tp) {
-        return(tibble(
-          Site = unique(station_df$Site),
-          Station = unique(station_df$Station),
-          n_tp = n,
-          recent_mean = NA_real_,
-          prev_mean = NA_real_,
-          pct_change = NA_real_,
-          log_ratio = NA_real_,
-          hist_pct_thresh = NA_real_,
-          hist_log_thresh = NA_real_,
-          perm_p = NA_real_,
-          effect_size = NA_real_,
-          hist_sd_change = NA_real_,
-          Trend = NA_character_
-        ))
-      }
-      
-      # ----------------------------------------------
-      # 1. Historical percent and log adaptive thresholds
-      # ----------------------------------------------
-      pct_changes_hist <- numeric(n-1)
-      for (i in 2:n) {
-        prev <- vals[i-1]
-        denom <- ifelse(prev == 0,
-                        max(median(vals[vals>0], na.rm=TRUE) * small, small),
-                        prev)
-        pct_changes_hist[i-1] <- (vals[i] - prev) / denom
-      }
-      
-      abs_pct_hist <- abs(pct_changes_hist)
-      hist_pct_thresh <- quantile(abs_pct_hist, pct_q, na.rm = TRUE)
-      if (is.na(hist_pct_thresh) || hist_pct_thresh == 0) hist_pct_thresh <- 0.05
-      
-      log_hist <- diff(log1p(vals))
-      hist_log_sd <- sd(log_hist, na.rm = TRUE)
-      if (is.na(hist_log_sd) || hist_log_sd == 0) hist_log_sd <- 0.01
-      
-      hist_log_thresh <- log_sd_mult * hist_log_sd
-      
-      # ----------------------------------------------
-      # 2. Define rolling windows
-      # ----------------------------------------------
-      recent_idx <- seq(max(1, n - k_recent + 1), n)
-      prev_idx   <- seq(max(1, n - k_recent - k_prev + 1),
-                        max(1, n - k_recent))
-      if (length(prev_idx) == 0) prev_idx <- max(1, n - 1)
-      
-      recent_vals <- vals[recent_idx]
-      prev_vals   <- vals[prev_idx]
-      recent_sds  <- sds[recent_idx]
-      prev_sds    <- sds[prev_idx]
-      
-      recent_mean <- mean(recent_vals, na.rm = TRUE)
-      prev_mean   <- mean(prev_vals,   na.rm = TRUE)
-      
-      denom <- ifelse(prev_mean == 0,
-                      max(median(vals[vals>0], na.rm=TRUE) * small, small),
-                      prev_mean)
-      
-      pct_change <- (recent_mean - prev_mean) / denom
-      log_ratio  <- log1p(recent_mean) - log1p(prev_mean)
-      
-      # ----------------------------------------------
-      # 3. Permutation test via lmperm::lmp()
-      # ----------------------------------------------
-      perm_df <- tibble(
-        value = c(prev_vals, recent_vals),
-        year  = factor(c(rep("prev", length(prev_vals)),
-                         rep("recent", length(recent_vals))))
-      )
-      
-      perm_fit <- try(lmp(value ~ year, data = perm_df), silent = TRUE)
-      
-      perm_p <- if (inherits(perm_fit, "try-error")) {
-        NA_real_
-      } else {
-        summary(perm_fit)$coefficients["yearrecent", "Pr(Prob)"]
-      }
-      
-      # ----------------------------------------------
-      # 4. Historical relevance gate
-      # ----------------------------------------------
-      hist_sd_change <- sd(diff(vals), na.rm = TRUE)
-      if (is.na(hist_sd_change)) hist_sd_change <- 0
-      
-      effect_size <- abs(recent_mean - prev_mean)
-      effect_gate <- effect_size > (hist_mult * hist_sd_change)
-      
-      # ----------------------------------------------
-      # 5. Optional SE gate (for within-year replication)
-      # ----------------------------------------------
-      if (use_SE_gate) {
-        recent_var <- mean(recent_sds^2, na.rm = TRUE) / length(recent_sds)
-        prev_var   <- mean(prev_sds^2,   na.rm = TRUE) / length(prev_sds)
-        SE_delta <- sqrt(recent_var + prev_var)
-        SE_gate <- effect_size > SE_delta
-      } else {
-        SE_gate <- TRUE
-      }
-      
-      # ----------------------------------------------
-      # 6. Combine gates + adaptive thresholds → Trend
-      # ----------------------------------------------
-      # Gate A: significance (low p-value)
-      sig_gate <- !is.na(perm_p) && perm_p < p_thresh
-      
-      # Gate B: station historical relevance
-      hist_gate <- effect_gate
-      
-      # Gate C: optional SE restraint
-      final_gate <- sig_gate && hist_gate && SE_gate
-      
-      # Adaptive directionality
-      is_up   <- pct_change >  hist_pct_thresh && log_ratio >  hist_log_thresh
-      is_down <- pct_change < -hist_pct_thresh && log_ratio < -hist_log_thresh
-      
-      Trend <- dplyr::case_when(
-        final_gate && is_up   ~ "Recovering",
-        final_gate && is_down ~ "Degrading",
-        TRUE ~ "Stable"
-      )
-      
-      # ----------------------------------------------
-      # 7. Return summary
-      # ----------------------------------------------
-      tibble(
-        Site = unique(station_df$Site),
-        Station = unique(station_df$Station),
-        n_tp = n,
-        recent_mean = recent_mean,
-        prev_mean = prev_mean,
-        pct_change = pct_change,
-        log_ratio = log_ratio,
-        hist_pct_thresh = hist_pct_thresh,
-        hist_log_thresh = hist_log_thresh,
-        perm_p = perm_p,
-        effect_size = effect_size,
-        hist_sd_change = hist_sd_change,
-        SE_gate = SE_gate,
-        sig_gate = sig_gate,
-        hist_gate = hist_gate,
-        Trend = Trend
-      )
-    }
-    
-    
-    
-    
-    # station_df must contain columns: Site, Station, Year, value (numeric)
-    # k_recent = number of last years to average (k_recent = 1 => last year only)
-    # k_prev   = number of previous years to average (k_prev = 1 => previous year only)
-    assign_trend_adaptive <- function(station_df,
-                                      station_df_sd,
-                                      varName,
-                                      # year,
-                                      k_recent = 1,
-                                      k_prev = 1,
-                                      pct_q = 0.70,   # percentile for pct_change threshold
-                                      log_sd_mult = 0.5, # multiplier for SD of historical log changes
-                                      min_tp = 3,
-                                      small = 1e-6) {
-      
-      
-      # Test zone
-      # station_df = coralRorcMean[coralRorcMean$Station == "casy",]
-      # station_df_sd = coralRorcSD[coralRorcSD$Station == "casy",]
-      # varName = "RorcHCB"
-      # # varName = "RorcCoralRichness"
-      # k_recent = 1
-      # k_prev = 1
-      # pct_q = 0.70
-      # log_sd_mult = 0.5
+      # dfMean = coralRorcMean
+      # dfSD = coralRorcSD
+      # varName = varCoral[1]
+      # hist_mult = 1.0
+      # se_mult = 1.0
+      # cum_mult = 1.0
       # min_tp = 3
-      # small = 1e-6
+      # cum_window = 2
       
       
-      station_df <- station_df %>% arrange(Year)
-      station_df_sd <- station_df_sd %>% arrange(Year)
-      # Filter by the available year?
-      # station_df <- station_df[station_df$Year <= year]
-      # station_df_sd <- station_df_sd[station_df_sd$Year <= year]
+      # Join mean and sd info. Expect dfMean has Year, Country, Region, Sector, Site, Station, n_samples, and varName present.
+      df <- dfMean %>%
+        select(Year, Country, Region, Sector, Site, Station, n_samples, mean_value = !!rlang::sym(varName)) %>%
+        left_join(
+          dfSD %>% select(Year, Site, Station, sd_value = !!rlang::sym(varName)),
+          by = c("Year", "Site", "Station")
+        ) %>%
+        arrange(Country, Region, Sector, Site, Station, Year)
       
-      vals <- station_df[[varName]]
-      sds <- station_df_sd[[varName]]
-      yrs  <- station_df$Year
-      n <- length(vals)
-      
-      
-      # --- return NA results if too few time points ---
-      if (n < min_tp) {
-        return(tibble(
-          Site = unique(station_df$Site),
-          Station = unique(station_df$Station),
-          n_tp = n,
-          recent_mean = NA_real_,
-          prev_mean = NA_real_,
-          pct_change = NA_real_,
-          log_ratio = NA_real_,
-          hist_pct_thresh = NA_real_,
-          hist_log_thresh = NA_real_,
-          Trend = NA_character_
-        ))
-      }
-      
-      # ------------------------------
-      # 1. Historical PERCENT CHANGES
-      # ------------------------------
-      pct_changes_hist <- c()
-      # Take all possible differences between value and n-1 value (2:n) 
-      for (i in 2:n) {
-        # i = 2
-        prev <- vals[i-1]
-        denom <- ifelse(prev == 0,
-                        max(median(vals[vals>0], na.rm = TRUE) * small, small), # check that
-                        prev)
-        pct_changes_hist[i-1] <- (vals[i] - prev) / denom
-      }
-      
-      abs_pct_hist <- abs(pct_changes_hist)
-      
-      # Adaptive threshold: 70th percentile (default)
-      hist_pct_thresh <- quantile(abs_pct_hist, pct_q, na.rm = TRUE)
-      if (is.na(hist_pct_thresh) || hist_pct_thresh == 0) {
-        hist_pct_thresh <- 0.05  # fallback small value of 5%
-      }
-      
-      # ------------------------------
-      # 2. Historical LOG CHANGES
-      # ------------------------------
-      log_hist <- diff(log1p(vals))
-      hist_log_sd <- sd(log_hist, na.rm = TRUE)
-      if (is.na(hist_log_sd) || hist_log_sd == 0) hist_log_sd <- 0.01 # small fall back expressing a very small variability for single values
-      
-      # Adaptive log threshold:
-      hist_log_thresh <- log_sd_mult * hist_log_sd
-      
-      # ------------------------------
-      # 3. Define recent & previous windows
-      # ------------------------------
-      recent_idx <- seq(max(1, n - k_recent + 1), n)
-      prev_idx   <- seq(max(1, n - k_recent - k_prev + 1),
-                        max(1, n - k_recent))
-      
-      if (length(prev_idx) == 0) prev_idx <- max(1, n - 1)
-      
-      recent_vals <- vals[recent_idx]
-      prev_vals   <- vals[prev_idx]
-      
-      # Mean only if more than one year for each window
-      recent_mean <- mean(recent_vals, na.rm = TRUE)
-      prev_mean   <- mean(prev_vals, na.rm = TRUE)
-      
-      denom <- ifelse(prev_mean == 0,
-                      max(median(vals[vals > 0], na.rm = TRUE) * small, small),
-                      prev_mean)
-      
-      pct_change <- (recent_mean - prev_mean) / denom
-      log_ratio  <- log1p(recent_mean) - log1p(prev_mean)
-      
-      # ------------------------------
-      # 4. Classification using ADAPTIVE thresholds
-      # ------------------------------
-      is_up <- (pct_change >  hist_pct_thresh) &
-        (log_ratio  >  hist_log_thresh)
-      
-      is_down <- (pct_change < -hist_pct_thresh) &
-        (log_ratio  < -hist_log_thresh)
-      
-      Trend <- dplyr::case_when(
-        is_up   ~ "Recovering",
-        is_down ~ "Degrading",
-        TRUE    ~ "Stable"
-      )
-      
-      # ------------------------------
-      # 5. Return results
-      # ------------------------------
-      tibble(
-        Site = unique(station_df$Site),
-        Station = unique(station_df$Station),
-        n_tp = n,
-        recent_mean = recent_mean,
-        prev_mean = prev_mean,
-        pct_change = pct_change,
-        log_ratio = log_ratio,
-        hist_pct_thresh = hist_pct_thresh,
-        hist_log_thresh = hist_log_thresh,
-        Trend = Trend
-      )
-    }
-    
-    
-    assign_trend_adaptive(station_df = coralRorcMean[coralRorcMean$Station == "casy",], 
-                          station_df_sd = coralRorcSD[coralRorcSD$Station == "casy",],
-                          varName = "RorcHCB"
-                          )
-    
-    
-    assign_trend_balanced <- function(st_year_df,
-                                      st_year_df_sd,
-                                      varName,
-                                      k_recent = 1,
-                                      k_prev = 1,
-                                      pct_threshold = 0.20,      # 20% change
-                                      log_threshold = 0.20,      # ~20% multiplicative
-                                      se_multiplier = 1.1,       # 1.1 × SE
-                                      min_tp = 3,
-                                      small = 1e-6) {
-      
-      # st_year_df = coralRorcMean[coralRorcMean$Station == "casy",]
-      # st_year_df_sd = coralRorcSD[coralRorcSD$Station == "casy",]
-      # varName = "RorcHCB"
-      # varName = "RorcCoralRichness"
-      # k_recent = 1
-      # k_prev = 1
-      # pct_threshold = 0.50     # 10% change
-      # log_threshold = 0.50      # ~10% multiplicative
-      # se_multiplier = 1.1      # 1 × SE
-      # min_tp = 3
-      # small = 1e-6
-      
-      # Simple check just in case
-      # must have columns: Site, Station, Year, mean_value, sd_value, n_samples
-      st_year_df <- st_year_df %>% arrange(Year)
-      st_year_df_sd <- st_year_df_sd %>% arrange(Year)
-      
-      if (nrow(st_year_df) < min_tp) {
-        return(tibble(
-          Site = unique(st_year_df$Site),
-          Station = unique(st_year_df$Station),
-          Variable = varName,
-          Trend = NA_character_,
-          pct_change = NA_real_,
-          log_ratio = NA_real_,
-          delta = NA_real_,
-          SE_delta = NA_real_,
-          reason = NA_character_
-        ))
-      }
-      
-      # extract vectors
-      vals <- st_year_df[[varName]]
-      sds  <- st_year_df_sd[[varName]]
-      ns   <- st_year_df$n_samples
-      yrs  <- st_year_df$Year
-      n    <- length(vals)
-      
-      # define windows
-      recent_idx <- seq(max(1, n - k_recent + 1), n)
-      prev_idx   <- seq(max(1, n - k_recent - k_prev + 1), max(1, n - k_recent))
-      
-      # fallback if too short
-      if (length(prev_idx) == 0) prev_idx <- max(1, n - 1)
-      
-      # compute means
-      recent_mean <- mean(vals[recent_idx], na.rm = TRUE)
-      prev_mean   <- mean(vals[prev_idx], na.rm = TRUE)
-      
-      # compute SE of difference
-      recent_var <- mean((sds[recent_idx]^2) / pmax(ns[recent_idx], 1), na.rm = TRUE)
-      prev_var   <- mean((sds[prev_idx]^2) / pmax(ns[prev_idx], 1),   na.rm = TRUE)
-      
-      SE_delta <- sqrt(recent_var + prev_var)
-      
-      # percent change
-      denom <- ifelse(prev_mean == 0,
-                      max(median(vals[vals>0], na.rm = TRUE) * small, small),
-                      prev_mean)
-      
-      pct_change <- (recent_mean - prev_mean) / denom
-      
-      # log-ratio
-      log_ratio <- log1p(recent_mean) - log1p(prev_mean)
-      
-      # raw difference
-      delta <- recent_mean - prev_mean
-      
-      # --- decision gates -----------------------------------------------
-      gate_pct <- abs(pct_change) >= pct_threshold
-      
-      gate_log <- abs(log_ratio) >= log_threshold
-      
-      gate_SE  <- abs(delta) >= se_multiplier * SE_delta
-      
-      is_up   <- (recent_mean > prev_mean) & (gate_pct | gate_log | gate_SE)
-      is_down <- (recent_mean < prev_mean) & (gate_pct | gate_log | gate_SE)
-      
-      Trend <- dplyr::case_when(
-        is_up   ~ "Increasing",
-        is_down ~ "Decreasing",
-        TRUE    ~ "Stable"
-      )
-      
-      reason <- paste(
-        c(
-          if (gate_pct) "pct" else NULL,
-          if (gate_log) "log" else NULL,
-          if (gate_SE)  "SE"  else NULL
-        ),
-        collapse = "+"
-      )
-      
-      tibble(
-        Site = unique(st_year_df$Site),
-        Station = unique(st_year_df$Station),
-        Variable = varName,
-        recent_mean = recent_mean,
-        prev_mean = prev_mean,
-        pct_change = pct_change,
-        log_ratio = log_ratio,
-        delta = delta,
-        SE_delta = SE_delta,
-        Trend = Trend,
-        reason = ifelse(reason == "", "none", reason)
-      )
-    }
-    
-    
-    # Function per variable for all station
-    coralRorcStationTrends <- do.call(rbind, lapply())
-    
-    
-    
-    
-    
-    
-    # Go see the code back in the trash
-    
-    # Take the GMM and force 3 states to identify 3 different groups as firstly thought (no quantiles on modes)
-    
-    # # Function to apply each variable to establish a state
-    # 
-    # 
-    # # Gaussian mixture models :
-    # # A data driven way to find thresholds based on each station temporal series.
-    # # Gaussian because its the most instinctive distribution
-    # # However it is a choice not to pick another distribution
-    # # The zero inflated data may bias or deserve another distribution but we'll roll with this "standard" for now and see how it works
-    # # Ecologically relevant, works.
-    # # A bit quirky because it doesn't consider bound data (notably here cover 0-100) so zero inflated will go in negatives
-    # # However, since we're looking at mode means, they cannot be negative and should stay relevant
-    
-    createStates <- function(x, data, by){
-
-      # TEST ZONE
-      x = "RorcHCB"
-      data = coralRorcMean
-
-      # x = "RorcCarnivoreAbund"
-      # x = "RorcFishRichness"
-      # data = fishRorc
-
-      by = c("Year","Station")
-      # eo test zone
-
-      # Extracting the data
-      df <- data[,c(by,x)]
-
-      # Converting to numeric as a safe quality check (to convert integers to numeric)
-      df[[x]] <- as.numeric(df[[x]])
-      
-      # Keep only positive data
-      df <- df[df[[x]] > 0,]
-
-      # Log transform
-      # df[[x]] <- log(df[[x]])
-      
-
-      # lapply function to rbind all station chunks after being individually evaluated for state generation
-      df1 <- do.call(rbind, lapply(unique(df$Station), function(y) {
-        # Test zone
-        # y = "mbere"
-        # y = "mwaremwa"
-        # y = "kanga_daa"
-        y = "bancs_du_nord"
-        # y = "koe"
-        # y = "lekiny"
-        # eo test zone
-
-        print(y)
-
-        # Extracting the station dataset chunk
-        test <- df[df$Station == y,]
-        # test <- df
-
-
-        # Need to check for zeros or very low values
-        if(sum(test[[x]]) %in% c(0:1)){
-          # If only zeros, apply basic thresholds that will only go to positive values
-          # 0% Low
-          # 0-30% medium
-          # > 30% = High
-          # To do in the future : take the threshold of the closest station ?
-
-          # 2 thresholds
-          test$classification <- NA
-          test$classification[test[[x]] == 0] <- "Low"
-          test$classification[test[[x]] > 0 & test[[x]] < 30] <- "Intermediate"
-          test$classification[test[[x]] >= 30] <- "High"
-          test$classification <- factor(test$classification, levels = c("High","Intermediate","Low"))
-
-
-        }else{
-
-          # Mixture Model to identify multiple gaussian modes
-          model <- Mclust(test[[x]])
-
-          # Get state thresholds
-          # If there is no mode resolution (too few data) we refer to the closest station ?
-          # If there is only one mode, we chose the data quartiles
-          # If there are more than two modes, keep the two extremes and leave the middle to "normal/medium/transitory" state
-          if(is.null(model$G)){
-            # To change to a warning with manual thresholds
-            stop("Gaussian mixture model is null, no solution found. Potentially not enough data.")
-
-          }else{
-            if(model$G == 1) {
-              # Take the quantile method
-              # HOWEVER : make a small adaptation to the number of observation. Notably if there is few data, don't let outliers become the norm
-              # Example with RorcHCB on koe (8 observations in total over 2 years (4 transects)). There are 4 zeros, 3 2.5 and one 5.
-              # With 0.33-0.66, no values are considered "Normal". Although one could say 2.5 is normal, zero is not, 5 is high
-              # So if we have few observation, let's say less than 5 years (20 observations over 4 transects), we use extremes 5% on each side and leave the 95% in "normal"
-              # for consistent data, we use 1/3 and 2/3 quantiles OR 1/4 - 3/4
-              # After some tests, values are too close one to another to exert the 1/3 or 1/4. Let's try and stick to extremes only
-              # if(length(test[[x]]) > 20) {
-              #   thres <- quantile(test[[x]], probs = c(0.25, 0.75))
-              # } else {
-              thres <- quantile(test[[x]], probs = c(0.025, 0.975))
-              # }
-
+      # group_modify: operate per (Site, Station)
+      out <- df %>%
+        group_by(Site, Station) %>%
+        arrange(Year) %>%
+        group_modify(~ {
+          d <- .x
+          # number of years available
+          n <- nrow(d)
+          
+          # initialize columns
+          d$dif <- NA_real_
+          d$SE_delta <- NA_real_
+          d$hist_sd <- NA_real_
+          d$cum2 <- NA_real_
+          d$Trend <- NA_character_
+          
+          # if not enough years, set Trend NA (or "Stable") and return the group's df
+          if (n < 2) {
+            d$Trend <- NA_character_
+            return(d)
+          }
+          
+          # Year-to-year diffs of means: dif[1] = NA, dif[i] = mean_value[i] - mean_value[i-1]
+          difs <- c(NA_real_, diff(d$mean_value))
+          d$dif <- difs
+          
+          # SE of mean for each year: SE = sd / sqrt(n_samples)
+          # If sd_value or n_samples missing, produce NA
+          SE_year <- rep(NA_real_, n)
+          valid_idx <- which(!is.na(d$sd_value) & !is.na(d$n_samples) & d$n_samples > 0)
+          if (length(valid_idx) > 0) {
+            SE_year[valid_idx] <- d$sd_value[valid_idx] / sqrt(d$n_samples[valid_idx])
+          }
+          
+          # SE of difference between year t and t-1 = sqrt(SE_t^2 + SE_t-1^2)
+          SE_delta <- rep(NA_real_, n)
+          for (i in 2:n) {
+            if (!is.na(SE_year[i]) && !is.na(SE_year[i-1])) {
+              SE_delta[i] <- sqrt(SE_year[i]^2 + SE_year[i-1]^2)
+            } else {
+              SE_delta[i] <- NA_real_
             }
-
-            if(model$G > 1) {
-              # Take the first and last mode means as thresholds and keep all intermediate potential distributions in intermediate
-              thres <- c(first(model$parameters$mean), last(model$parameters$mean))
+          }
+          d$SE_delta <- SE_delta
+          
+          # historical sd of diffs excluding the first NA
+          hist_sd <- sd(difs[-1], na.rm = TRUE)
+          if (is.na(hist_sd) || hist_sd == 0) hist_sd <- 0
+          d$hist_sd <- hist_sd
+          
+          # # cumulative window sums of diffs (rolling sum over `cum_window` difs)
+          # # difs are defined for indices 2..n; we will compute cum at positions i that have enough previous difs
+          # cum_vals <- rep(NA_real_, n)
+          # 
+          # if (cum_window <= 1) {
+          #   # degenerate: cum_window 1 => same as difs
+          #   cum_vals <- difs
+          # } else {
+          #   for (i in 1:n) {
+          #     # we want indices of difs to sum: (i - (cum_window-1)) : i
+          #     idx <- seq(i - (cum_window - 1), i)
+          #     # keep only indices >= 2 and <= n (difs valid from 2..n)
+          #     idx <- idx[idx >= 2 & idx <= n]
+          #     if (length(idx) == cum_window) {
+          #       cum_vals[i] <- sum(difs[idx], na.rm = FALSE)
+          #     } else {
+          #       cum_vals[i] <- NA_real_
+          #     }
+          #   }
+          # }
+          
+          # cumulative window of diffs (sign-consistent only)
+          cum_vals <- rep(NA_real_, n)
+          
+          if (cum_window <= 1) {
+            cum_vals <- difs
+          } else {
+            for (i in 1:n) {
+              idx <- seq(i - (cum_window - 1), i)
+              idx <- idx[idx >= 2 & idx <= n]
+              
+              # only compute cumulative sum if we have exactly cum_window difs
+              if (length(idx) == cum_window) {
+                window_vals <- difs[idx]
+                
+                # check if all difs have same sign (ignoring zeros)
+                signs <- sign(window_vals)
+                signs <- signs[signs != 0]     # remove zeros; zero ruins sign logic but contains no direction
+                
+                if (length(signs) == 0) {
+                  # all zeros → cumulative = 0, but can never trip a gate, safe to keep
+                  cum_vals[i] <- 0
+                } else if (all(signs == signs[1])) {
+                  # consistent signs → sum is meaningful
+                  cum_vals[i] <- sum(window_vals)
+                } else {
+                  # inconsistent directional signals → ignore cumulative window
+                  cum_vals[i] <- NA_real_
+                }
+                
+              } else {
+                cum_vals[i] <- NA_real_
+              }
+            }
+          }
+          d$cum2 <- cum_vals
+          
+          # Determine Trend per year (compare year i to year i-1)
+          Trend <- rep("Stable", n)
+          Trend[1] <- NA_character_
+          
+          for (i in 2:n) {
+            dif_i <- difs[i]
+            se_i <- SE_delta[i]
+            cum_i <- cum_vals[i]
+            
+            # single-year gates: historical sd gate and SE gate
+            gate_hist <- if (hist_sd == 0) FALSE else abs(dif_i) > hist_mult * hist_sd
+            gate_se   <- if (is.na(se_i)) FALSE else abs(dif_i) > se_mult * se_i
+            gate_single <- gate_hist & gate_se
+            
+            # cumulative gate (compare cumulative sum to cumulative multiplier * hist_sd)
+            gate_cum <- if (is.na(cum_i) || hist_sd == 0) FALSE else abs(cum_i) > cum_mult * hist_sd
+            
+            # classification: require either single-year gate OR cumulative gate
+            if (gate_single) {
+              if (dif_i > 0) Trend[i] <- "Recovering" else if (dif_i < 0) Trend[i] <- "Degrading" else Trend[i] <- "Stable"
+            } else if (gate_cum) {
+              if (cum_i > 0) Trend[i] <- "Recovering" else if (cum_i < 0) Trend[i] <- "Degrading" else Trend[i] <- "Stable"
+            } else {
+              Trend[i] <- "Stable"
             }
           }
           
-          # Convert back to raw values
-          # thres <- exp(thres)
-
+          d$Trend <- Trend
           
+          # enforce min_tp: if group has fewer than min_tp years, set Trend to NA
+          if (n < min_tp) d$Trend <- NA_character_
           
-          
-
-          # 2 thresholds
-          test$classification <- NA
-          test$classification[test[[x]] <= thres[1]] <- "Degrading"
-          test$classification[test[[x]] > thres[1] & test[[x]] < thres[2]] <- "Stable"
-          test$classification[test[[x]] >= thres[2]] <- "Recovering"
-          test$classification <- factor(test$classification, levels = c("Recovering","Stable","Degrading"))
-          
-          ggplot(data = test, aes(x = Year, y = !!sym(x), group = 1))+
-            geom_path() +
-            geom_point(aes(color = classification)) +
-            scale_color_manual(values = c("#009E73","#56B4E9","#D55E00"), drop = FALSE) +
-            facet_wrap(.~Station) +
-            geom_hline(yintercept = thres[1], linetype = "dashed", linewidth = 0.1) +
-            geom_hline(yintercept = thres[2], linetype = "dashed", linewidth = 0.1) +
-            theme_classic()
-          
-          
-
-        }
-
-        return(test)
-
-      }))
-
-
-      return(df1)
-
-
-
+          d
+        }) %>%
+        ungroup()
+      
+      return(out)
     }
-
-    res <- createStates(x = "RorcHCB", data = coralRorc, by = c("Year","Station", "Sample"))
-
-  
-  
+    
+    test <- assign_trend_rules(coralRorcMean, coralRorcSD, "RorcCoralCover")
+    
+    test1 <- test[test$Station == "baie_des_citrons",]
+    
+    ggplot(data = test1, aes(x = Year, y = mean_value)) +
+      geom_line()+
+      geom_point(aes(color = Trend))+
+      theme_classic()
+    
+    # Compute for all variables
+    pathTrends <- file.path(pathPro,"Thresholds","Trends")
+    dir.create(pathTrends, showWarnings = FALSE)
+    # Coral
+    lapply(varCoral, function(x) {
+      dataVar <- assign_trend_rules(coralRorcMean, coralRorcSD, x)
+      # cb <- dataVar[,c("Site","Station","Year","Country","Region","Sector","n_samples","Trend")]
+      # colnames(cb[colnames(cb) == "Trend"])
+      write.csv(dataVar, file = file.path(pathTrends, paste0("RORC_Coral_", x, "_Station_Trends_States_hdbn.csv")), row.names = FALSE)
+    })
+    # Fish
+    lapply(varFish, function(x) {
+      dataVar <- assign_trend_rules(fishRorcMean, fishRorcSD, x)
+      write.csv(dataVar, file = file.path(pathTrends, paste0("RORC_Fish_", x, "_Station_Trends_States_hdbn.csv")), row.names = FALSE)
+    })
+    
+    # Inv
+    lapply(varInv, function(x) {
+      dataVar <- assign_trend_rules(invRorcMean, invRorcSD, x)
+      write.csv(dataVar, file = file.path(pathTrends, paste0("RORC_Inv_", x, "_Station_Trends_States_hdbn.csv")), row.names = FALSE)
+    })
     
     
+    # Wrapper to concatenate all trends per variables
+    # Coral
+    coralMeanTrend <- coralRorcMean
+    meta_cols <- c("Year","Country","Region","Sector","Site","Station","n_samples")
+    var_list <- varCoral
+    
+    for(v in var_list){
+      trendsdf <- assign_trend_rules(coralRorcMean, coralRorcSD, v)
+      trendsdf <- trendsdf[,c(meta_cols, "Trend")]
+      # rename Trend column to the variable name so join can overwrite cleanly
+      trendsdf <- trendsdf %>% 
+        rename(!!v := Trend)
+      
+      # merge by the meta columns, without depending on row order
+      coralMeanTrend <- coralMeanTrend %>%
+        select(-all_of(v)) %>%       # remove old values of v
+        left_join(trendsdf, by = meta_cols)
+      
+    }    
+    write.csv(coralMeanTrend, file = file.path(pathPro, paste0("RORC_Coral_Station_Trends_States_hdbn.csv")), row.names = FALSE)
+    
+    # Fish
+    fishMeanTrend <- fishRorcMean
+    meta_cols <- c("Year","Country","Region","Sector","Site","Station","n_samples")
+    var_list <- varFish
+    
+    for(v in var_list){
+      trendsdf <- assign_trend_rules(fishRorcMean, fishRorcSD, v)
+      trendsdf <- trendsdf[,c(meta_cols, "Trend")]
+      # rename Trend column to the variable name so join can overwrite cleanly
+      trendsdf <- trendsdf %>% 
+        rename(!!v := Trend)
+      
+      # merge by the meta columns, without depending on row order
+      fishMeanTrend <- fishMeanTrend %>%
+        select(-all_of(v)) %>%       # remove old values of v
+        left_join(trendsdf, by = meta_cols)
+      
+    }    
+    write.csv(fishMeanTrend, file = file.path(pathPro, paste0("RORC_Fish_Station_Trends_States_hdbn.csv")), row.names = FALSE)
     
     
+    # Inv
+    invMeanTrend <- invRorcMean
+    meta_cols <- c("Year","Country","Region","Sector","Site","Station","n_samples")
+    var_list <- varInv
     
-  
+    for(v in var_list){
+      trendsdf <- assign_trend_rules(invRorcMean, invRorcSD, v)
+      trendsdf <- trendsdf[,c(meta_cols, "Trend")]
+      # rename Trend column to the variable name so join can overwrite cleanly
+      trendsdf <- trendsdf %>% 
+        rename(!!v := Trend)
+      
+      # merge by the meta columns, without depending on row order
+      invMeanTrend <- invMeanTrend %>%
+        select(-all_of(v)) %>%       # remove old values of v
+        left_join(trendsdf, by = meta_cols)
+      
+    }    
+    write.csv(invMeanTrend, file = file.path(pathPro, paste0("RORC_Inv_Station_Trends_States_hdbn.csv")), row.names = FALSE)
   
   
 # TRASH ----
+    # # Go see the code back in the trash
+    # 
+    # # Take the GMM and force 3 states to identify 3 different groups as firstly thought (no quantiles on modes)
+    # 
+    # # # Function to apply each variable to establish a state
+    # # 
+    # # 
+    # # # Gaussian mixture models :
+    # # # A data driven way to find thresholds based on each station temporal series.
+    # # # Gaussian because its the most instinctive distribution
+    # # # However it is a choice not to pick another distribution
+    # # # The zero inflated data may bias or deserve another distribution but we'll roll with this "standard" for now and see how it works
+    # # # Ecologically relevant, works.
+    # # # A bit quirky because it doesn't consider bound data (notably here cover 0-100) so zero inflated will go in negatives
+    # # # However, since we're looking at mode means, they cannot be negative and should stay relevant
+    # 
+    # createStates <- function(x, data, by){
+    # 
+    #   # TEST ZONE
+    #   x = "RorcHCB"
+    #   data = coralRorcMean
+    # 
+    #   # x = "RorcCarnivoreAbund"
+    #   # x = "RorcFishRichness"
+    #   # data = fishRorc
+    # 
+    #   by = c("Year","Station")
+    #   # eo test zone
+    # 
+    #   # Extracting the data
+    #   df <- data[,c(by,x)]
+    # 
+    #   # Converting to numeric as a safe quality check (to convert integers to numeric)
+    #   df[[x]] <- as.numeric(df[[x]])
+    #   
+    #   # Keep only positive data
+    #   df <- df[df[[x]] > 0,]
+    # 
+    #   # Log transform
+    #   # df[[x]] <- log(df[[x]])
+    #   
+    # 
+    #   # lapply function to rbind all station chunks after being individually evaluated for state generation
+    #   df1 <- do.call(rbind, lapply(unique(df$Station), function(y) {
+    #     # Test zone
+    #     # y = "mbere"
+    #     # y = "mwaremwa"
+    #     # y = "kanga_daa"
+    #     y = "bancs_du_nord"
+    #     # y = "koe"
+    #     # y = "lekiny"
+    #     # eo test zone
+    # 
+    #     print(y)
+    # 
+    #     # Extracting the station dataset chunk
+    #     test <- df[df$Station == y,]
+    #     # test <- df
+    # 
+    # 
+    #     # Need to check for zeros or very low values
+    #     if(sum(test[[x]]) %in% c(0:1)){
+    #       # If only zeros, apply basic thresholds that will only go to positive values
+    #       # 0% Low
+    #       # 0-30% medium
+    #       # > 30% = High
+    #       # To do in the future : take the threshold of the closest station ?
+    # 
+    #       # 2 thresholds
+    #       test$classification <- NA
+    #       test$classification[test[[x]] == 0] <- "Low"
+    #       test$classification[test[[x]] > 0 & test[[x]] < 30] <- "Intermediate"
+    #       test$classification[test[[x]] >= 30] <- "High"
+    #       test$classification <- factor(test$classification, levels = c("High","Intermediate","Low"))
+    # 
+    # 
+    #     }else{
+    # 
+    #       # Mixture Model to identify multiple gaussian modes
+    #       model <- Mclust(test[[x]])
+    # 
+    #       # Get state thresholds
+    #       # If there is no mode resolution (too few data) we refer to the closest station ?
+    #       # If there is only one mode, we chose the data quartiles
+    #       # If there are more than two modes, keep the two extremes and leave the middle to "normal/medium/transitory" state
+    #       if(is.null(model$G)){
+    #         # To change to a warning with manual thresholds
+    #         stop("Gaussian mixture model is null, no solution found. Potentially not enough data.")
+    # 
+    #       }else{
+    #         if(model$G == 1) {
+    #           # Take the quantile method
+    #           # HOWEVER : make a small adaptation to the number of observation. Notably if there is few data, don't let outliers become the norm
+    #           # Example with RorcHCB on koe (8 observations in total over 2 years (4 transects)). There are 4 zeros, 3 2.5 and one 5.
+    #           # With 0.33-0.66, no values are considered "Normal". Although one could say 2.5 is normal, zero is not, 5 is high
+    #           # So if we have few observation, let's say less than 5 years (20 observations over 4 transects), we use extremes 5% on each side and leave the 95% in "normal"
+    #           # for consistent data, we use 1/3 and 2/3 quantiles OR 1/4 - 3/4
+    #           # After some tests, values are too close one to another to exert the 1/3 or 1/4. Let's try and stick to extremes only
+    #           # if(length(test[[x]]) > 20) {
+    #           #   thres <- quantile(test[[x]], probs = c(0.25, 0.75))
+    #           # } else {
+    #           thres <- quantile(test[[x]], probs = c(0.025, 0.975))
+    #           # }
+    # 
+    #         }
+    # 
+    #         if(model$G > 1) {
+    #           # Take the first and last mode means as thresholds and keep all intermediate potential distributions in intermediate
+    #           thres <- c(first(model$parameters$mean), last(model$parameters$mean))
+    #         }
+    #       }
+    #       
+    #       # Convert back to raw values
+    #       # thres <- exp(thres)
+    # 
+    #       
+    #       
+    #       
+    # 
+    #       # 2 thresholds
+    #       test$classification <- NA
+    #       test$classification[test[[x]] <= thres[1]] <- "Degrading"
+    #       test$classification[test[[x]] > thres[1] & test[[x]] < thres[2]] <- "Stable"
+    #       test$classification[test[[x]] >= thres[2]] <- "Recovering"
+    #       test$classification <- factor(test$classification, levels = c("Recovering","Stable","Degrading"))
+    #       
+    #       ggplot(data = test, aes(x = Year, y = !!sym(x), group = 1))+
+    #         geom_path() +
+    #         geom_point(aes(color = classification)) +
+    #         scale_color_manual(values = c("#009E73","#56B4E9","#D55E00"), drop = FALSE) +
+    #         facet_wrap(.~Station) +
+    #         geom_hline(yintercept = thres[1], linetype = "dashed", linewidth = 0.1) +
+    #         geom_hline(yintercept = thres[2], linetype = "dashed", linewidth = 0.1) +
+    #         theme_classic()
+    #       
+    #       
+    # 
+    #     }
+    # 
+    #     return(test)
+    # 
+    #   }))
+    # 
+    # 
+    #   return(df1)
+    # 
+    # 
+    # 
+    # }
+    # 
+    # res <- createStates(x = "RorcHCB", data = coralRorc, by = c("Year","Station", "Sample"))
+    # 
+    # 
+    # 
+    # 
+    # 
+    
+    # # Permutational test of the mean between year x and year x-1 for each variable
+    # # The function takes the values of a variable column from the dataframe at sample scale
+    # # For each station, the function takes the whole temporal series and checks if there is enough data (2 series)
+    # # It computes the sd of differences on the whole station's temporal series
+    # # rbind Lapply in each station for each year, that runs the lmperm
+    # # Check the significance, check the sd difference, if both are good
+    # 
+    # # Lmperm function
+    # perm_p <- function(values_year_tm1, values_year_t) {
+    #   # Test zone
+    #   # values_year_tm1 = df2[df2$Year == yr-1,y]
+    #   # values_year_t = df2[df2$Year == yr,y]
+    #   values_year_tm1 = c(0,10,20,40)
+    #   values_year_t = c(0,0,12.5,7.5)
+    #   
+    #   df <- tibble(
+    #     value = c(values_year_tm1, values_year_t),
+    #     year  = factor(c(rep("Tminus1", length(values_year_tm1)),
+    #                      rep("T", length(values_year_t))))
+    #   )
+    #   
+    #   fit <- lmp(value ~ year, data = df)
+    #   summary(fit)$coefficients["year1", "Pr(Exact)"]
+    # }
+    # 
+    # # Test perm_p
+    # perm_p(c(0,1), c(0,0))
+    # perm_p(c(0,0), c(0,0))
+    # perm_p(c(0), c(0))
+    # 
+    # 
+    # # Function
+    # assignDDStationTrends <- function(st, data, varNames){ # x is the station name
+    #   
+    #   # Test zone
+    #   st = "casy"
+    #   data = coralRorc
+    #   varNames = varCoral
+    #   
+    #   # Remember, the data should be structured at least with Year, Station and Samples outside the varNames
+    #   
+    #   # Extract the df
+    #   df <- data[data$Station == st,]
+    #   
+    #   # Compute per-year means + sample counts
+    #   dfMean <- df %>%
+    #     group_by(Year, Station) %>%
+    #     summarise(
+    #       n_samples = n_distinct(Sample),
+    #       across(all_of(varNames), mean),
+    #       .groups = "drop"
+    #     ) %>%
+    #     arrange(Year)
+    #   
+    #   years <- dfMean$Year
+    #   
+    #   # ---- Historical SD-based gates per variable ----
+    #   hist_sd_change <- sapply(varNames, function(v){
+    #     x <- dfMean[[v]]
+    #     
+    #     dx <- diff(x)
+    #     if (length(dx) < 2) {
+    #       sdChange <- sd(x, na.rm = TRUE)
+    #     } else {
+    #       sdChange <- sd(dx, na.rm = TRUE)
+    #     }
+    #     
+    #     if (is.na(sdChange)) sdChange <- 0
+    #     return(sdChange)
+    #   })
+    #   
+    #   
+    #   # Run the function for each column of varNames
+    #   # ---- For each variable, compute rolling year-to-year trend ----
+    #   for (v in varNames) {
+    #     # v = "RorcHCB"
+    #     
+    #     sdGate <- hist_sd_change[[v]]
+    #     
+    #     res <- sapply(seq_along(years), function(i){
+    #       # i = 2
+    #       
+    #       if (i == 1) return(NA_character_)
+    #       
+    #       Tm1 <- df[df$Year == years[i-1], v]
+    #       T0  <- df[df$Year == years[i],   v]
+    #       
+    #       dif <- mean(T0) - mean(Tm1)
+    #       
+    #       case_when(
+    #         dif >  sdGate ~ "Recovering",
+    #         dif < -sdGate ~ "Degrading",
+    #         TRUE          ~ "Stable"
+    #       )
+    #     })
+    #     
+    #     # add the column to dfMean
+    #     dfMean[[paste0(v, "_trend")]] <- res
+    #   }
+    #   
+    #   
+    #   
+    #   return(dfMean)
+    # }
+    # 
+    # 
+    #   dfMean[varNames] <- lapply(dfMean[varNames], function(var, dat = df) {
+    #     # Test
+    #     # var = dfMean[varNames][2]
+    # 
+    #     # Define colname
+    #     varCol <- colnames(var)
+    #     
+    #     print(varCol)
+    #     
+    #     # Recreate df with variable
+    #     df1 <- dat[,c("Year", "Station", "Sample", varCol)]
+    #     
+    #     # isolate the sd threshold gate
+    #     sdGate <- hist_sd_change[varCol]
+    #     
+    #     # Isolate first year
+    #     firstYear <- df1$Year[1]
+    #     
+    #     # Compute yearly permutation tests of mean (no test for the first value), 
+    #     # check the pvalue and if positive, compare to sd threshold to estimate state
+    #     res <- unlist(lapply(unique(df1$Year), function(yr){
+    #       # yr = 2014
+    #       # yr = 2022
+    #       
+    #       if(yr == firstYear){trend <- NA
+    #       }else{
+    #         
+    #         # df2 <- df1[df1$Year %in% c(yr-1, yr),]
+    #         Tm1 <- df1[df1$Year == yr-1, varCol]
+    #         T0 <- df1[df1$Year == yr, varCol]
+    #         # re <- perm_p(Tm1, T0)
+    #         dif <- mean(T0) - mean(Tm1)
+    #         
+    #         # 
+    #         trend <- dplyr::case_when(
+    #           # dif > sdGate && dif > 0 && re <= 0.05  ~ "Recovering",
+    #           # dif < -sdGate && dif < 0 && re <= 0.05 ~ "Degrading",
+    #           dif > sdGate && dif > 0  ~ "Recovering",
+    #           dif < -sdGate && dif < 0 ~ "Degrading",
+    #           TRUE ~ "Stable"
+    #         )
+    #         
+    #         return(trend)
+    #         
+    #       }
+    #       
+    #     }))
+    #     
+    #     # ggplot(data = dfMean, aes(x = Year, y = !!sym(varCol))) +
+    #     #   geom_line()+
+    #     #   geom_point(aes(color = res))+
+    #     #   theme_classic()
+    #     
+    #     return(res)
+    #     
+    #   })
+    #   
+    #   return(dfMean)
+    #   
+    # } 
+    # 
+    # # Then I do call rbind so I can replicate it simply for each dataset
+    # assignDDStationTrends("casy", coralRorc, varCoral)
+    # coralRorcStationTrends <- do.call(rbind, lapply(unique(coralRorc$Station), assignDDStationTrends, data = coralRorc, varNames = varCoral))
+    # 
+    # 
+    # 
+    # # permutation test for difference in means (two-sample)
+    # # Brute force
+    # # perm_test_mean <- function(x, y, B = 2000, seed = 1) {
+    # #   set.seed(seed)
+    # #   obs <- mean(x, na.rm = TRUE) - mean(y, na.rm = TRUE)
+    # #   pooled <- c(x, y)
+    # #   n_x <- length(x)
+    # #   diffs <- replicate(B, {
+    # #     s <- sample(pooled, length(pooled), replace = FALSE)
+    # #     mean(s[1:n_x], na.rm = TRUE) - mean(s[(n_x+1):length(pooled)], na.rm = TRUE)
+    # #   })
+    # #   p_two <- mean(abs(diffs) >= abs(obs))
+    # #   list(stat = obs, p_perm = p_two)
+    # # }
+    # 
+    # # Lmperm
+    # perm_p <- function(values_year_t, values_year_tm1) {
+    #   df <- tibble(
+    #     value = c(values_year_t, values_year_tm1),
+    #     year  = factor(c(rep("T", length(values_year_t)),
+    #                      rep("Tminus1", length(values_year_tm1))))
+    #   )
+    #   
+    #   fit <- lmp(value ~ year, data = df)
+    #   summary(fit)$coefficients["yearT", "Pr(Prob)"]
+    # }
+    # 
+    # 
+    # # ----------------------------------------------
+    # # 2. Define rolling windows
+    # # ----------------------------------------------
+    # recent_idx <- seq(max(1, n - k_recent + 1), n)
+    # prev_idx   <- seq(max(1, n - k_recent - k_prev + 1),
+    #                   max(1, n - k_recent))
+    # if (length(prev_idx) == 0) prev_idx <- max(1, n - 1)
+    # 
+    # recent_vals <- vals[recent_idx]
+    # prev_vals   <- vals[prev_idx]
+    # recent_sds  <- sds[recent_idx]
+    # prev_sds    <- sds[prev_idx]
+    # 
+    # recent_mean <- mean(recent_vals, na.rm = TRUE)
+    # prev_mean   <- mean(prev_vals,   na.rm = TRUE)
+    # 
+    # denom <- ifelse(prev_mean == 0,
+    #                 max(median(vals[vals>0], na.rm=TRUE) * small, small),
+    #                 prev_mean)
+    # 
+    # pct_change <- (recent_mean - prev_mean) / denom
+    # log_ratio  <- log1p(recent_mean) - log1p(prev_mean)
+    # 
+    # # ----------------------------------------------
+    # # 3. Permutation test via lmperm::lmp()
+    # # ----------------------------------------------
+    # perm_df <- tibble(
+    #   value = c(prev_vals, recent_vals),
+    #   year  = factor(c(rep("prev", length(prev_vals)),
+    #                    rep("recent", length(recent_vals))))
+    # )
+    # 
+    # perm_fit <- try(lmp(value ~ year, data = perm_df), silent = TRUE)
+    # 
+    # perm_p <- if (inherits(perm_fit, "try-error")) {
+    #   NA_real_
+    # } else {
+    #   summary(perm_fit)$coefficients["yearrecent", "Pr(Prob)"]
+    # }
+    # 
+    # 
+    # # ----------------------------------------------
+    # # 4. Historical relevance gate
+    # # ----------------------------------------------
+    # hist_sd_change <- sd(diff(vals), na.rm = TRUE)
+    # if (is.na(hist_sd_change)) hist_sd_change <- 0
+    # 
+    # effect_size <- abs(recent_mean - prev_mean)
+    # effect_gate <- effect_size > (hist_mult * hist_sd_change)
+    # 
+    # 
+    # 
+    # 
+    # assign_trend_adaptive <- function(station_df,
+    #                                   station_df_sd,
+    #                                   varName,
+    #                                   k_recent = 1,
+    #                                   k_prev = 1,
+    #                                   pct_q = 0.70,
+    #                                   log_sd_mult = 0.5,
+    #                                   min_tp = 3,
+    #                                   p_thresh = 0.10,        # permutation p-value threshold
+    #                                   hist_mult = 0.5,        # historical-effect-size threshold multiplier
+    #                                   use_SE_gate = TRUE,     # optional
+    #                                   small = 1e-6) {
+    #   
+    #   # Test Zone
+    #   station_df = coralRorcMean[coralRorcMean$Station == "casy",]
+    #   station_df_sd = coralRorcSD[coralRorcSD$Station == "casy",]
+    #   varName = "RorcHCB"
+    #   k_recent = 1
+    #   k_prev = 1
+    #   pct_q = 0.70
+    #   log_sd_mult = 0.5
+    #   min_tp = 2
+    #   p_thresh = 0.10       # permutation p-value threshold
+    #   hist_mult = 0.5        # historical-effect-size threshold multiplier
+    #   use_SE_gate = TRUE     # optional
+    #   small = 1e-6
+    #   
+    #   
+    #   station_df <- station_df %>% arrange(Year)
+    #   station_df_sd <- station_df_sd %>% arrange(Year)
+    #   
+    #   vals <- station_df[[varName]]
+    #   sds  <- station_df_sd[[varName]]
+    #   yrs  <- station_df$Year
+    #   n    <- length(vals)
+    #   
+    #   if (n < min_tp) {
+    #     return(tibble(
+    #       Site = unique(station_df$Site),
+    #       Station = unique(station_df$Station),
+    #       n_tp = n,
+    #       recent_mean = NA_real_,
+    #       prev_mean = NA_real_,
+    #       pct_change = NA_real_,
+    #       log_ratio = NA_real_,
+    #       hist_pct_thresh = NA_real_,
+    #       hist_log_thresh = NA_real_,
+    #       perm_p = NA_real_,
+    #       effect_size = NA_real_,
+    #       hist_sd_change = NA_real_,
+    #       Trend = NA_character_
+    #     ))
+    #   }
+    #   
+    #   # ----------------------------------------------
+    #   # 1. Historical percent and log adaptive thresholds
+    #   # ----------------------------------------------
+    #   pct_changes_hist <- numeric(n-1)
+    #   for (i in 2:n) {
+    #     prev <- vals[i-1]
+    #     denom <- ifelse(prev == 0,
+    #                     max(median(vals[vals>0], na.rm=TRUE) * small, small),
+    #                     prev)
+    #     pct_changes_hist[i-1] <- (vals[i] - prev) / denom
+    #   }
+    #   
+    #   abs_pct_hist <- abs(pct_changes_hist)
+    #   hist_pct_thresh <- quantile(abs_pct_hist, pct_q, na.rm = TRUE)
+    #   if (is.na(hist_pct_thresh) || hist_pct_thresh == 0) hist_pct_thresh <- 0.05
+    #   
+    #   log_hist <- diff(log1p(vals))
+    #   hist_log_sd <- sd(log_hist, na.rm = TRUE)
+    #   if (is.na(hist_log_sd) || hist_log_sd == 0) hist_log_sd <- 0.01
+    #   
+    #   hist_log_thresh <- log_sd_mult * hist_log_sd
+    #   
+    #   # ----------------------------------------------
+    #   # 2. Define rolling windows
+    #   # ----------------------------------------------
+    #   recent_idx <- seq(max(1, n - k_recent + 1), n)
+    #   prev_idx   <- seq(max(1, n - k_recent - k_prev + 1),
+    #                     max(1, n - k_recent))
+    #   if (length(prev_idx) == 0) prev_idx <- max(1, n - 1)
+    #   
+    #   recent_vals <- vals[recent_idx]
+    #   prev_vals   <- vals[prev_idx]
+    #   recent_sds  <- sds[recent_idx]
+    #   prev_sds    <- sds[prev_idx]
+    #   
+    #   recent_mean <- mean(recent_vals, na.rm = TRUE)
+    #   prev_mean   <- mean(prev_vals,   na.rm = TRUE)
+    #   
+    #   denom <- ifelse(prev_mean == 0,
+    #                   max(median(vals[vals>0], na.rm=TRUE) * small, small),
+    #                   prev_mean)
+    #   
+    #   pct_change <- (recent_mean - prev_mean) / denom
+    #   log_ratio  <- log1p(recent_mean) - log1p(prev_mean)
+    #   
+    #   # ----------------------------------------------
+    #   # 3. Permutation test via lmperm::lmp()
+    #   # ----------------------------------------------
+    #   perm_df <- tibble(
+    #     value = c(prev_vals, recent_vals),
+    #     year  = factor(c(rep("prev", length(prev_vals)),
+    #                      rep("recent", length(recent_vals))))
+    #   )
+    #   
+    #   perm_fit <- try(lmp(value ~ year, data = perm_df), silent = TRUE)
+    #   
+    #   perm_p <- if (inherits(perm_fit, "try-error")) {
+    #     NA_real_
+    #   } else {
+    #     summary(perm_fit)$coefficients["yearrecent", "Pr(Prob)"]
+    #   }
+    #   
+    #   # ----------------------------------------------
+    #   # 4. Historical relevance gate
+    #   # ----------------------------------------------
+    #   hist_sd_change <- sd(diff(vals), na.rm = TRUE)
+    #   if (is.na(hist_sd_change)) hist_sd_change <- 0
+    #   
+    #   effect_size <- abs(recent_mean - prev_mean)
+    #   effect_gate <- effect_size > (hist_mult * hist_sd_change)
+    #   
+    #   # ----------------------------------------------
+    #   # 5. Optional SE gate (for within-year replication)
+    #   # ----------------------------------------------
+    #   if (use_SE_gate) {
+    #     recent_var <- mean(recent_sds^2, na.rm = TRUE) / length(recent_sds)
+    #     prev_var   <- mean(prev_sds^2,   na.rm = TRUE) / length(prev_sds)
+    #     SE_delta <- sqrt(recent_var + prev_var)
+    #     SE_gate <- effect_size > SE_delta
+    #   } else {
+    #     SE_gate <- TRUE
+    #   }
+    #   
+    #   # ----------------------------------------------
+    #   # 6. Combine gates + adaptive thresholds → Trend
+    #   # ----------------------------------------------
+    #   # Gate A: significance (low p-value)
+    #   sig_gate <- !is.na(perm_p) && perm_p < p_thresh
+    #   
+    #   # Gate B: station historical relevance
+    #   hist_gate <- effect_gate
+    #   
+    #   # Gate C: optional SE restraint
+    #   final_gate <- sig_gate && hist_gate && SE_gate
+    #   
+    #   # Adaptive directionality
+    #   is_up   <- pct_change >  hist_pct_thresh && log_ratio >  hist_log_thresh
+    #   is_down <- pct_change < -hist_pct_thresh && log_ratio < -hist_log_thresh
+    #   
+    #   Trend <- dplyr::case_when(
+    #     final_gate && is_up   ~ "Recovering",
+    #     final_gate && is_down ~ "Degrading",
+    #     TRUE ~ "Stable"
+    #   )
+    #   
+    #   # ----------------------------------------------
+    #   # 7. Return summary
+    #   # ----------------------------------------------
+    #   tibble(
+    #     Site = unique(station_df$Site),
+    #     Station = unique(station_df$Station),
+    #     n_tp = n,
+    #     recent_mean = recent_mean,
+    #     prev_mean = prev_mean,
+    #     pct_change = pct_change,
+    #     log_ratio = log_ratio,
+    #     hist_pct_thresh = hist_pct_thresh,
+    #     hist_log_thresh = hist_log_thresh,
+    #     perm_p = perm_p,
+    #     effect_size = effect_size,
+    #     hist_sd_change = hist_sd_change,
+    #     SE_gate = SE_gate,
+    #     sig_gate = sig_gate,
+    #     hist_gate = hist_gate,
+    #     Trend = Trend
+    #   )
+    # }
+    # 
+    # 
+    # 
+    # 
+    # # station_df must contain columns: Site, Station, Year, value (numeric)
+    # # k_recent = number of last years to average (k_recent = 1 => last year only)
+    # # k_prev   = number of previous years to average (k_prev = 1 => previous year only)
+    # assign_trend_adaptive <- function(station_df,
+    #                                   station_df_sd,
+    #                                   varName,
+    #                                   # year,
+    #                                   k_recent = 1,
+    #                                   k_prev = 1,
+    #                                   pct_q = 0.70,   # percentile for pct_change threshold
+    #                                   log_sd_mult = 0.5, # multiplier for SD of historical log changes
+    #                                   min_tp = 3,
+    #                                   small = 1e-6) {
+    #   
+    #   
+    #   # Test zone
+    #   # station_df = coralRorcMean[coralRorcMean$Station == "casy",]
+    #   # station_df_sd = coralRorcSD[coralRorcSD$Station == "casy",]
+    #   # varName = "RorcHCB"
+    #   # # varName = "RorcCoralRichness"
+    #   # k_recent = 1
+    #   # k_prev = 1
+    #   # pct_q = 0.70
+    #   # log_sd_mult = 0.5
+    #   # min_tp = 3
+    #   # small = 1e-6
+    #   
+    #   
+    #   station_df <- station_df %>% arrange(Year)
+    #   station_df_sd <- station_df_sd %>% arrange(Year)
+    #   # Filter by the available year?
+    #   # station_df <- station_df[station_df$Year <= year]
+    #   # station_df_sd <- station_df_sd[station_df_sd$Year <= year]
+    #   
+    #   vals <- station_df[[varName]]
+    #   sds <- station_df_sd[[varName]]
+    #   yrs  <- station_df$Year
+    #   n <- length(vals)
+    #   
+    #   
+    #   # --- return NA results if too few time points ---
+    #   if (n < min_tp) {
+    #     return(tibble(
+    #       Site = unique(station_df$Site),
+    #       Station = unique(station_df$Station),
+    #       n_tp = n,
+    #       recent_mean = NA_real_,
+    #       prev_mean = NA_real_,
+    #       pct_change = NA_real_,
+    #       log_ratio = NA_real_,
+    #       hist_pct_thresh = NA_real_,
+    #       hist_log_thresh = NA_real_,
+    #       Trend = NA_character_
+    #     ))
+    #   }
+    #   
+    #   # ------------------------------
+    #   # 1. Historical PERCENT CHANGES
+    #   # ------------------------------
+    #   pct_changes_hist <- c()
+    #   # Take all possible differences between value and n-1 value (2:n) 
+    #   for (i in 2:n) {
+    #     # i = 2
+    #     prev <- vals[i-1]
+    #     denom <- ifelse(prev == 0,
+    #                     max(median(vals[vals>0], na.rm = TRUE) * small, small), # check that
+    #                     prev)
+    #     pct_changes_hist[i-1] <- (vals[i] - prev) / denom
+    #   }
+    #   
+    #   abs_pct_hist <- abs(pct_changes_hist)
+    #   
+    #   # Adaptive threshold: 70th percentile (default)
+    #   hist_pct_thresh <- quantile(abs_pct_hist, pct_q, na.rm = TRUE)
+    #   if (is.na(hist_pct_thresh) || hist_pct_thresh == 0) {
+    #     hist_pct_thresh <- 0.05  # fallback small value of 5%
+    #   }
+    #   
+    #   # ------------------------------
+    #   # 2. Historical LOG CHANGES
+    #   # ------------------------------
+    #   log_hist <- diff(log1p(vals))
+    #   hist_log_sd <- sd(log_hist, na.rm = TRUE)
+    #   if (is.na(hist_log_sd) || hist_log_sd == 0) hist_log_sd <- 0.01 # small fall back expressing a very small variability for single values
+    #   
+    #   # Adaptive log threshold:
+    #   hist_log_thresh <- log_sd_mult * hist_log_sd
+    #   
+    #   # ------------------------------
+    #   # 3. Define recent & previous windows
+    #   # ------------------------------
+    #   recent_idx <- seq(max(1, n - k_recent + 1), n)
+    #   prev_idx   <- seq(max(1, n - k_recent - k_prev + 1),
+    #                     max(1, n - k_recent))
+    #   
+    #   if (length(prev_idx) == 0) prev_idx <- max(1, n - 1)
+    #   
+    #   recent_vals <- vals[recent_idx]
+    #   prev_vals   <- vals[prev_idx]
+    #   
+    #   # Mean only if more than one year for each window
+    #   recent_mean <- mean(recent_vals, na.rm = TRUE)
+    #   prev_mean   <- mean(prev_vals, na.rm = TRUE)
+    #   
+    #   denom <- ifelse(prev_mean == 0,
+    #                   max(median(vals[vals > 0], na.rm = TRUE) * small, small),
+    #                   prev_mean)
+    #   
+    #   pct_change <- (recent_mean - prev_mean) / denom
+    #   log_ratio  <- log1p(recent_mean) - log1p(prev_mean)
+    #   
+    #   # ------------------------------
+    #   # 4. Classification using ADAPTIVE thresholds
+    #   # ------------------------------
+    #   is_up <- (pct_change >  hist_pct_thresh) &
+    #     (log_ratio  >  hist_log_thresh)
+    #   
+    #   is_down <- (pct_change < -hist_pct_thresh) &
+    #     (log_ratio  < -hist_log_thresh)
+    #   
+    #   Trend <- dplyr::case_when(
+    #     is_up   ~ "Recovering",
+    #     is_down ~ "Degrading",
+    #     TRUE    ~ "Stable"
+    #   )
+    #   
+    #   # ------------------------------
+    #   # 5. Return results
+    #   # ------------------------------
+    #   tibble(
+    #     Site = unique(station_df$Site),
+    #     Station = unique(station_df$Station),
+    #     n_tp = n,
+    #     recent_mean = recent_mean,
+    #     prev_mean = prev_mean,
+    #     pct_change = pct_change,
+    #     log_ratio = log_ratio,
+    #     hist_pct_thresh = hist_pct_thresh,
+    #     hist_log_thresh = hist_log_thresh,
+    #     Trend = Trend
+    #   )
+    # }
+    # 
+    # 
+    # assign_trend_adaptive(station_df = coralRorcMean[coralRorcMean$Station == "casy",], 
+    #                       station_df_sd = coralRorcSD[coralRorcSD$Station == "casy",],
+    #                       varName = "RorcHCB"
+    #                       )
+    # 
+    # 
+    # assign_trend_balanced <- function(st_year_df,
+    #                                   st_year_df_sd,
+    #                                   varName,
+    #                                   k_recent = 1,
+    #                                   k_prev = 1,
+    #                                   pct_threshold = 0.20,      # 20% change
+    #                                   log_threshold = 0.20,      # ~20% multiplicative
+    #                                   se_multiplier = 1.1,       # 1.1 × SE
+    #                                   min_tp = 3,
+    #                                   small = 1e-6) {
+    #   
+    #   # st_year_df = coralRorcMean[coralRorcMean$Station == "casy",]
+    #   # st_year_df_sd = coralRorcSD[coralRorcSD$Station == "casy",]
+    #   # varName = "RorcHCB"
+    #   # varName = "RorcCoralRichness"
+    #   # k_recent = 1
+    #   # k_prev = 1
+    #   # pct_threshold = 0.50     # 10% change
+    #   # log_threshold = 0.50      # ~10% multiplicative
+    #   # se_multiplier = 1.1      # 1 × SE
+    #   # min_tp = 3
+    #   # small = 1e-6
+    #   
+    #   # Simple check just in case
+    #   # must have columns: Site, Station, Year, mean_value, sd_value, n_samples
+    #   st_year_df <- st_year_df %>% arrange(Year)
+    #   st_year_df_sd <- st_year_df_sd %>% arrange(Year)
+    #   
+    #   if (nrow(st_year_df) < min_tp) {
+    #     return(tibble(
+    #       Site = unique(st_year_df$Site),
+    #       Station = unique(st_year_df$Station),
+    #       Variable = varName,
+    #       Trend = NA_character_,
+    #       pct_change = NA_real_,
+    #       log_ratio = NA_real_,
+    #       delta = NA_real_,
+    #       SE_delta = NA_real_,
+    #       reason = NA_character_
+    #     ))
+    #   }
+    #   
+    #   # extract vectors
+    #   vals <- st_year_df[[varName]]
+    #   sds  <- st_year_df_sd[[varName]]
+    #   ns   <- st_year_df$n_samples
+    #   yrs  <- st_year_df$Year
+    #   n    <- length(vals)
+    #   
+    #   # define windows
+    #   recent_idx <- seq(max(1, n - k_recent + 1), n)
+    #   prev_idx   <- seq(max(1, n - k_recent - k_prev + 1), max(1, n - k_recent))
+    #   
+    #   # fallback if too short
+    #   if (length(prev_idx) == 0) prev_idx <- max(1, n - 1)
+    #   
+    #   # compute means
+    #   recent_mean <- mean(vals[recent_idx], na.rm = TRUE)
+    #   prev_mean   <- mean(vals[prev_idx], na.rm = TRUE)
+    #   
+    #   # compute SE of difference
+    #   recent_var <- mean((sds[recent_idx]^2) / pmax(ns[recent_idx], 1), na.rm = TRUE)
+    #   prev_var   <- mean((sds[prev_idx]^2) / pmax(ns[prev_idx], 1),   na.rm = TRUE)
+    #   
+    #   SE_delta <- sqrt(recent_var + prev_var)
+    #   
+    #   # percent change
+    #   denom <- ifelse(prev_mean == 0,
+    #                   max(median(vals[vals>0], na.rm = TRUE) * small, small),
+    #                   prev_mean)
+    #   
+    #   pct_change <- (recent_mean - prev_mean) / denom
+    #   
+    #   # log-ratio
+    #   log_ratio <- log1p(recent_mean) - log1p(prev_mean)
+    #   
+    #   # raw difference
+    #   delta <- recent_mean - prev_mean
+    #   
+    #   # --- decision gates -----------------------------------------------
+    #   gate_pct <- abs(pct_change) >= pct_threshold
+    #   
+    #   gate_log <- abs(log_ratio) >= log_threshold
+    #   
+    #   gate_SE  <- abs(delta) >= se_multiplier * SE_delta
+    #   
+    #   is_up   <- (recent_mean > prev_mean) & (gate_pct | gate_log | gate_SE)
+    #   is_down <- (recent_mean < prev_mean) & (gate_pct | gate_log | gate_SE)
+    #   
+    #   Trend <- dplyr::case_when(
+    #     is_up   ~ "Increasing",
+    #     is_down ~ "Decreasing",
+    #     TRUE    ~ "Stable"
+    #   )
+    #   
+    #   reason <- paste(
+    #     c(
+    #       if (gate_pct) "pct" else NULL,
+    #       if (gate_log) "log" else NULL,
+    #       if (gate_SE)  "SE"  else NULL
+    #     ),
+    #     collapse = "+"
+    #   )
+    #   
+    #   tibble(
+    #     Site = unique(st_year_df$Site),
+    #     Station = unique(st_year_df$Station),
+    #     Variable = varName,
+    #     recent_mean = recent_mean,
+    #     prev_mean = prev_mean,
+    #     pct_change = pct_change,
+    #     log_ratio = log_ratio,
+    #     delta = delta,
+    #     SE_delta = SE_delta,
+    #     Trend = Trend,
+    #     reason = ifelse(reason == "", "none", reason)
+    #   )
+    # }
+    # 
+    # 
+    # # Function per variable for all station
+    # coralRorcStationTrends <- do.call(rbind, lapply())
+    # 
+    # 
+    # 
+    # 
     
     # coralRorcGeneralStates[varCoral] <- lapply(varCoral, function(x){
     #   
