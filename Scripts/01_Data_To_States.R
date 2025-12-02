@@ -606,6 +606,8 @@ source("Scripts/00_Initialisation.R")
     # States here are more "Degrading, "Stagnating, Recovering"
     # In fact its simple for this one : only check value of previous year and consider if it is going back up or stagnating or going down
     
+    # /!\  ADD IF DIFF = 0 AT T0 FOR CUM2 THEN STABLE, DONT KEEP ONLY THE ADDITION OF ONE PART
+    
     assign_trend_rules <- function(dfMean,
                                    dfSD,
                                    varName,
@@ -686,26 +688,6 @@ source("Scripts/00_Initialisation.R")
           if (is.na(hist_sd) || hist_sd == 0) hist_sd <- 0
           d$hist_sd <- hist_sd
           
-          # # cumulative window sums of diffs (rolling sum over `cum_window` difs)
-          # # difs are defined for indices 2..n; we will compute cum at positions i that have enough previous difs
-          # cum_vals <- rep(NA_real_, n)
-          # 
-          # if (cum_window <= 1) {
-          #   # degenerate: cum_window 1 => same as difs
-          #   cum_vals <- difs
-          # } else {
-          #   for (i in 1:n) {
-          #     # we want indices of difs to sum: (i - (cum_window-1)) : i
-          #     idx <- seq(i - (cum_window - 1), i)
-          #     # keep only indices >= 2 and <= n (difs valid from 2..n)
-          #     idx <- idx[idx >= 2 & idx <= n]
-          #     if (length(idx) == cum_window) {
-          #       cum_vals[i] <- sum(difs[idx], na.rm = FALSE)
-          #     } else {
-          #       cum_vals[i] <- NA_real_
-          #     }
-          #   }
-          # }
           
           # cumulative window of diffs (sign-consistent only)
           cum_vals <- rep(NA_real_, n)
@@ -717,30 +699,65 @@ source("Scripts/00_Initialisation.R")
               idx <- seq(i - (cum_window - 1), i)
               idx <- idx[idx >= 2 & idx <= n]
               
-              # only compute cumulative sum if we have exactly cum_window difs
               if (length(idx) == cum_window) {
                 window_vals <- difs[idx]
+                prev <- window_vals[1]
+                curr <- window_vals[2]
                 
-                # check if all difs have same sign (ignoring zeros)
-                signs <- sign(window_vals)
-                signs <- signs[signs != 0]     # remove zeros; zero ruins sign logic but contains no direction
-                
-                if (length(signs) == 0) {
-                  # all zeros → cumulative = 0, but can never trip a gate, safe to keep
-                  cum_vals[i] <- 0
-                } else if (all(signs == signs[1])) {
-                  # consistent signs → sum is meaningful
-                  cum_vals[i] <- sum(window_vals)
-                } else {
-                  # inconsistent directional signals → ignore cumulative window
-                  cum_vals[i] <- NA_real_
+                # --- NEW RULES ---
+                if (curr == 0) {
+                  cum_vals[i] <- 0                # momentum broken
+                  next
                 }
                 
-              } else {
-                cum_vals[i] <- NA_real_
+                # curr != 0 → cumulative = curr
+                cum_vals[i] <- curr
+                next
               }
+              
+              cum_vals[i] <- NA_real_
             }
           }
+          
+          # Old version
+          # if (cum_window <= 1) {
+          #   cum_vals <- difs
+          # } else {
+          #   for (i in 1:n) {
+          #     idx <- seq(i - (cum_window - 1), i)
+          #     idx <- idx[idx >= 2 & idx <= n]
+          #     
+          #     # only compute cumulative sum if we have exactly cum_window difs
+          #     if (length(idx) == cum_window) {
+          #       window_vals <- difs[idx]
+          #       
+          #       if (any(window_vals == 0)) {
+          #         cum_vals[i] <- 0
+          #         next
+          #       }
+          #       
+          #       # check if all difs have same sign (ignoring zeros)
+          #       signs <- sign(window_vals)
+          #       signs <- signs[signs != 0]     # remove zeros; zero ruins sign logic but contains no direction
+          #       
+          #       if (length(signs) == 0) {
+          #         # all zeros → cumulative = 0, but can never trip a gate, safe to keep
+          #         cum_vals[i] <- 0
+          #       } else if (all(signs == signs[1])) {
+          #         # consistent signs → sum is meaningful
+          #         cum_vals[i] <- sum(window_vals)
+          #       } else {
+          #         # inconsistent directional signals → ignore cumulative window
+          #         cum_vals[i] <- NA_real_
+          #       }
+          #       
+          #     } else {
+          #       cum_vals[i] <- NA_real_
+          #     }
+          #   }
+          # }
+          
+          
           d$cum2 <- cum_vals
           
           # Determine Trend per year (compare year i to year i-1)
@@ -782,14 +799,37 @@ source("Scripts/00_Initialisation.R")
       return(out)
     }
     
-    test <- assign_trend_rules(coralRorcMean, coralRorcSD, "RorcCoralCover")
+    # test <- assign_trend_rules(coralRorcMean, coralRorcSD, "RorcCoralCover")
+    test <- assign_trend_rules(coralRorcMean, coralRorcSD, "RorcHCB")
+    # test <- assign_trend_rules(coralRorcMean, coralRorcSD, "RorcHCO")
+    # test$Trend
     
+    unique(test$Station)
+    test1 <- test[test$Station == "maitre",]
+    test1 <- test[test$Station == "signal",]
+    test1 <- test[test$Station == "casy",]
     test1 <- test[test$Station == "baie_des_citrons",]
     
+    test1$Trend <- ifelse(is.na(test1$Trend), "NA", test1$Trend)
+    
     ggplot(data = test1, aes(x = Year, y = mean_value)) +
+      geom_hline(yintercept = c(0, 2.5,7.5,17.5), colour = c("red","orange","yellow","lightgreen"), linetype = "dashed") +
       geom_line()+
+      geom_errorbar(aes(ymin=mean_value-sd_value, ymax=mean_value+sd_value), width=.2,
+                    position=position_dodge(0.05), color = "grey", linetype = "dashed") +
       geom_point(aes(color = Trend))+
+      scale_color_manual(
+        values = c(
+          "Degrading"  = "#D55E00",
+          "Recovering" = "#009E73",
+          "Stable"     = "#56B4E9",
+          "NA"         = "#999999"   # now a real category → legend appears
+        ),
+        limits = c("Degrading","Recovering","Stable","NA"),
+        drop = FALSE
+      ) +
       theme_classic()
+    
     
     # Compute for all variables
     pathTrends <- file.path(pathPro,"Thresholds","Trends")
@@ -877,6 +917,24 @@ source("Scripts/00_Initialisation.R")
     write.csv(invMeanTrend, file = file.path(pathPro, paste0("RORC_Inv_Station_Trends_States_hdbn.csv")), row.names = FALSE)
   
   
+    
+# some plots for presentations
+    # Read general thresholds
+    coralMean <- coralRorcMean
+    coralSD <- coralRorcSD
+    coralStates <- read.csv(file.path(pathPro,"RORC_Coral_Station_General_States_hdbn.csv"))
+    
+    
+    
+    # Read evolution
+  
+    
+    
+    
+    
+    
+    
+    
 # TRASH ----
     # # Go see the code back in the trash
     # 
