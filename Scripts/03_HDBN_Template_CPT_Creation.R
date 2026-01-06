@@ -7,31 +7,32 @@
 #############################################################################################
 
 # What does this script do:
-# Construct core model
+# Read the core model made in Genie
+# Constructs and exports all CPT from the core model nodes
+# Constructs and exports the template for the hierarchy of all biological variables (5 states throughout all variables)
+# Constructs and exports the environmental variable CPT
 # function to create hierarchical nodes given standard structure and adaptation with loaded data
 
 
 # INIT -----
 
-# Clean slate
-rm(list=ls(all=TRUE))
-
-# Libraries initialization
-init1 <- tail(unlist(strsplit(rstudioapi::getActiveDocumentContext()$path, "/")), n = 1)
-source("Scripts/00_Initialisation.R")
-
-
-  # Install the package:
-  # you'll need to download the package from BayesFusion:
-  # https://download.bayesfusion.com/files.html?category=Academia
-  # Copy/paste the .tar.gz file at the root of the Rproj
-  # Then install it manually
-  # DONE ONCE, THIS PART SHOULD STAY COMMENTED IF THE PACKAGE IS ALREADY INSTALLED
-  # install.packages("rSMILE_2.4.0_R_x86_64-pc-linux-gnu.tar.gz", repos = NULL, type = "source")
+  # Clean slate
+  rm(list=ls(all=TRUE))
   
-library(rSMILE)
-source("License.R")
-# ?addTemporalArc
+  # Libraries initialization
+  init1 <- tail(unlist(strsplit(rstudioapi::getActiveDocumentContext()$path, "/")), n = 1)
+  source("Scripts/00_Initialisation.R")
+  
+  # /!\ Exception from the Initialisation.R script
+    # Install the package rSMILE:
+    # you'll need to download the package manually from BayesFusion:
+    # https://download.bayesfusion.com/files.html?category=Academia
+    # Copy/paste the .tar.gz file at the root of the Rproj
+    # Then install it manually
+    # DONE ONCE, THIS PART SHOULD STAY COMMENTED IF THE PACKAGE IS ALREADY INSTALLED
+    # install.packages("rSMILE_2.4.0_R_x86_64-pc-linux-gnu.tar.gz", repos = NULL, type = "source")
+    library(rSMILE)
+    source("License.R")
 
 
 # DATA TESTING ----
@@ -63,62 +64,12 @@ source("License.R")
     
   # Inspect CPTs
   # node = "Coral_Diversity"
-  node = "Coral_Reef_Ecosystem_Health"
+  # node = "Coral_Reef_Ecosystem_Health"
   # node = "Branching_Coral_Cover"
+  node = "Fish_Carnivores_Biomass"
   net$getOutcomeIds(node)
   net$getNodeDefinition(node)
   
-    # Function to get CPT in dataframe
-    getCPT <- function(net, node, temporal_order = c(1,2)) {
-      states <- net$getOutcomeIds(node)
-      n_states <- length(states)
-      
-      # parents in the same time slice
-      parents_now <- net$getParents(node)
-      names(parents_now) <- unlist(lapply(parents_now, net$getNodeId))
-      
-      # parents from previous slices (temporal)
-      parents_temp <- unlist(lapply(temporal_order, function(x) {
-        # x = 2
-        res <- net$getTemporalParents(node, x)
-        if(length(res) == 0) return(NULL)
-        resNode <- res[[1]]$handle
-        resId <- res[[1]]$id
-        resOrder <- res[[1]]$order
-        names(resNode) <- paste0(resId, "_t-",resOrder)
-        return(resNode)
-        
-      }))
-      
-      # merge all parents
-      parents <- c(parents_now, parents_temp)
-      
-      # no parents -> simple prior
-      if (length(parents) == 0) {
-        probs <- net$getNodeDefinition(node)
-        return(data.frame(State = states, Probability = probs))
-      }
-      
-      # list of outcomes for all parents
-      parent_states <- lapply(parents, function(p) net$getOutcomeIds(p))
-      
-      # build all combinations of parent states
-      parent_grid <- expand.grid(parent_states, KEEP.OUT.ATTRS = FALSE)
-      # names(parent_grid) <- names(parents)
-      
-      # raw CPT definition from SMILE
-      raw <- net$getNodeDefinition(node)
-      
-      # reshape: each parent combo gets n_states probabilities
-      cpt <- cbind(parent_grid, matrix(raw, ncol = n_states, byrow = TRUE))
-      names(cpt)[(ncol(cpt)-n_states+1):ncol(cpt)] <- states
-      
-      return(cpt)
-    }
-  
-  
-  
-   
 
     # testing function
     getCPT(net, node)

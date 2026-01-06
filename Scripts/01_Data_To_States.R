@@ -29,12 +29,12 @@
 
 # INIT -----
 
-# Clean slate
-rm(list=ls(all=TRUE))
-
-# Libraries initialization
-init1 <- tail(unlist(strsplit(rstudioapi::getActiveDocumentContext()$path, "/")), n = 1)
-source("Scripts/00_Initialisation.R")
+  # Clean slate
+  rm(list=ls(all=TRUE))
+  
+  # Libraries initialization
+  init1 <- tail(unlist(strsplit(rstudioapi::getActiveDocumentContext()$path, "/")), n = 1)
+  source("Scripts/00_Initialisation.R")
 
 
   # eo INIT ----
