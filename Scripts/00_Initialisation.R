@@ -64,10 +64,13 @@ if(init1 == "02_Environment_Data_To_States.R") {
   
   # Travel time
   # This package will install pretty much all other needed packages for SIG processing
+  if (!require("purrr")) install.packages("purrr")
   if (!require("ncdf4")) install.packages("ncdf4")
   if (!require("terra")) install.packages("terra")
   if (!require("stars")) install.packages("stars")
   if (!require("httr2")) install.packages("httr2")
+  if (!require("lwgeom")) install.packages("lwgeom")
+  if (!require("geosphere")) install.packages("geosphere")
   
   
 }
@@ -179,8 +182,8 @@ download_erddap_yearly <- function(
 ) {
   
   # debugzone
-  # dataset_id = "noaacrwsstDaily"
-  # vars = c("analysed_sst")
+  # dataset_id = "noaacwNPPVIIRSSQchlaDaily"
+  # vars = c("chlor_a")
   # start_year = 2013
   # end_year = 2024
   # start_MMDD = "01-01"
@@ -189,7 +192,7 @@ download_erddap_yearly <- function(
   # lat_max = -14
   # lon_min = 155
   # lon_max = 175
-  # out_dir = file.path(pathEnv, "Temperature")
+  # out_dir = file.path(pathEnv, "Chlorophyll_a")
   # retries = 5
   # pause_sec = 3
   # eo debugzone
