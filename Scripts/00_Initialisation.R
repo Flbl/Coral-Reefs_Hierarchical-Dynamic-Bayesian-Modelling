@@ -167,6 +167,8 @@ download_erddap_yearly <- function(
     vars,                  # character vector of variable names, e.g., c("bleaching_alert_area","mask")
     start_year,            # first year to download, integer
     end_year,              # last year to download, integer
+    start_MMDD = "01-01",  # time MM-DD in case the dataset has different date (e.g. monthly)
+    end_MMDD = "12-31",    # time MM-DD in case the dataset has different date (e.g. monthly)
     lat_min,               # minimum latitude bound
     lat_max,               # maximum latitude bound
     lon_min,               # minimum longitude bound
@@ -181,6 +183,8 @@ download_erddap_yearly <- function(
   # vars = c("analysed_sst")
   # start_year = 2013
   # end_year = 2024
+  # start_MMDD = "01-01"
+  # end_MMDD = "12-31"
   # lat_min = -27
   # lat_max = -14
   # lon_min = 155
@@ -204,8 +208,11 @@ download_erddap_yearly <- function(
     # eo debugzone
     
     # Build ISO time stamps for the start and end of the year
-    start_date <- sprintf("%d-01-01T12:00:00Z", year)
-    end_date   <- sprintf("%d-12-31T12:00:00Z", year)
+    start_date <- sprintf("%d-%sT12:00:00Z", year, start_MMDD)
+    end_date   <- sprintf("%d-%sT12:00:00Z", year, end_MMDD)
+    # Build ISO time stamps for the start and end of the year
+    # start_date <- sprintf("%d-01-01T12:00:00Z", year)
+    # end_date   <- sprintf("%d-12-31T12:00:00Z", year)
     
     # Define output filename for this year's NetCDF file
     outfile <- file.path(out_dir, sprintf("%s_%d.nc", dataset_id, year))

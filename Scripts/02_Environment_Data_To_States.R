@@ -18,28 +18,26 @@
 
 # INIT -----
 
-  # Clean slate
-  rm(list=ls(all=TRUE))
-  
-  # Libraries initialization
-  init1 <- tail(unlist(strsplit(rstudioapi::getActiveDocumentContext()$path, "/")), n = 1)
-  source("Scripts/00_Initialisation.R")
+# Clean slate
+rm(list=ls(all=TRUE))
 
+# Libraries initialization
+init1 <- tail(unlist(strsplit(rstudioapi::getActiveDocumentContext()$path, "/")), n = 1)
+source("Scripts/00_Initialisation.R")
 
   # eo INIT ----
 
-
-# TEMPERATURE ----
   
-  # 5 states : well below, below, average, over, well over
+# GET DATA -----
+  
+  # GET TEMPERATURE ----
+  
   # We'll use the Coral Temp from the CRW datasets (5km res)
   # There could also be the MUR GHRSST but doesn't cover after 2023 (2km res)
-  
   # Coral reef watch SST:
   # original link : https://coastwatch.noaa.gov/erddap/griddap/noaacrwsstDaily.html
-  # Use this link to get Dataset ID and grid Variables wanted, then come back here to use the custom R function to request the data through URL
-  
-  
+  # Use this link to get Dataset ID and grid Variables wanted, 
+  # then come back here to use the custom R function to request the data through URL (see 00_initialisation.R for the function)
   download_erddap_yearly(
     dataset_id = "noaacrwsstDaily",
     vars = c("analysed_sst"),  
@@ -52,12 +50,62 @@
     out_dir = file.path(pathEnv, "Temperature")
   )
   
+    # eo get temperature ----
   
+  
+  # GET HEATWAVES ----
+    
+  # Bleaching alert Area of the Coral Reef Watch
+  # Same function from ERRDAP, go there:
+  # https://coastwatch.noaa.gov/erddap/griddap/noaacrwbaa7dDaily.html
+
+  download_erddap_yearly(
+    dataset_id = "noaacrwbaa7dDaily",
+    vars = c("bleaching_alert_area"),  
+    start_year = 2013,
+    end_year = 2024,
+    lat_min = -27,
+    lat_max = -14,
+    lon_min = 155,
+    lon_max = 175,
+    out_dir = file.path(pathEnv, "Heatwaves_BAA")
+  )
+    
+    # eo get heatwaves ----
+
+
+  # GET CHL-A ----
+  # There is no gap filled/complete chla dataset in NOAA
+  # So we use a copernicus dataset
   
 
   
+
+
+
+
+# TEMPERATURE ----
   
+  # 5 states : well below, below, average, over, well over
+  # Reading files
+  # Creating simple path
+  pathTemp <- file.path(pathEnv, "Temperature")
   
+  # Getting file name
+  sstFileName <- file.path(pathTemp,"noaacrwsstDaily_2013.nc")
+  
+  # ncdf4 to check
+  nc <- nc_open(sstFileName)
+  print(nc)
+  nc$dim
+  
+  # Terra brick to access data
+  sstR <- rast(sstFileName, subds = "analysed_sst")
+  sstR[[1]]
+  plot(sstR[[1]])
+  plot(sstR[[90]])
+  plot(sstR[[180]])
+  plot(sstR[[270]])
   
   
   
@@ -68,6 +116,39 @@
   # No alert (first 1-3 levels)
   # Bleaching (Alert 1-2)
   # Mortality (Alert 3-5)
+  
+  # Creating simple path
+  pathHeat <- file.path(pathEnv, "Heatwaves_BAA")
+  
+  # Getting file name
+  baaFileName <- file.path(pathHeat,"noaacrwbaa7dDaily_2013.nc")
+  
+  # ncdf4 to check
+  nc <- nc_open(baaFileName)
+  print(nc)
+  nc$dim
+  
+  # Terra brick to access data
+  baaR <- rast(baaFileName, subds = "bleaching_alert_area")
+  baaR[[1]]
+  plot(baaR[[350]])
+  
+  
+  fix_orientation <- function(r) {
+    y <- terra::yFromRow(r)
+    if (y[1] > y[length(y)]) {
+      r <- terra::flip(r, "vertical")
+    }
+    r
+  }
+  
+  plot(fix_orientation(baaR[[1]]))
+  
+  plot(flip(baaR[[350]], direction = "vertical"))
+  terra::ext(baaR)
+  ext(sstR)
+  terra::ylabel(baaR)
+  
   nc <- nc_open(file.path(pathDat,"Environment","CRW","crw_baa_2013_2018.nc"))
   print(nc)
   names(nc$var)
@@ -81,8 +162,9 @@
   
   # eo heatwaves ----
   
+  ra <- rast(file.path(pathDat,"Environment","Chlorophyll_a","noaacwNPPVIIRSSQchlaDaily_8938_b7ee_2602.nc"), subds = "chlor_a")
+  plot(flip(ra[[2]], direction = "vertical"))
   
-
   
   
 # COTS OUTBREAKS ----
