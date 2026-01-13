@@ -41,7 +41,7 @@ source("Scripts/00_Initialisation.R")
   download_erddap_yearly(
     dataset_id = "noaacrwsstDaily",
     vars = c("analysed_sst"),  
-    start_year = 2013,
+    start_year = 2002,
     end_year = 2024,
     lat_min = -27,
     lat_max = -14,
@@ -128,36 +128,208 @@ source("Scripts/00_Initialisation.R")
 
   
 
-
-
-
 # PROCESS DATA ----
+
+  # READ BIOLOGICAL DATA FOR STATION ASSIGNATION ----
+  # Coral
+  coralRorc <- read.csv(file.path("Data", "Species","RORC_Coral_Data_hdbn.csv"))
+
+  # Fish
+  fishRorc <- read.csv(file.path("Data", "Species","RORC_Fish_Data_hdbn.csv"))
+
+  # Inv
+  invRorc <- read.csv(file.path("Data", "Species","RORC_Inv_Data_hdbn.csv"))
+
+  # Create common station df
+  stationsRorc <- st_as_sf(
+    merge(
+      merge(
+        coralRorc[!is.na(coralRorc$Lon),] %>% distinct(Site, Station, Lon, Lat),
+        fishRorc[!is.na(fishRorc$Lon),] %>% distinct(Site, Station, Lon, Lat),
+        all = TRUE),
+      invRorc[!is.na(invRorc$Lon),] %>% distinct(Site, Station, Lon, Lat),
+      all = TRUE),
+    coords = c("Lon", "Lat"),
+    crs = 3163
+    )
+  
+  # Convert to wgs84
+  stationsRorc <- st_transform(stationsRorc, 4326)
+    
+    # eo read biological data for station assignation ----
+
 
   # TEMPERATURE ----
     
+    # Read data, check time series, extract values for each station, get the quantiles as threshold
+  
     # 5 states : well below, below, average, over, well over
+    # 3 states because otherwise CPT explosion
     # Reading files
     # Creating simple path
     pathTemp <- file.path(pathEnv, "Temperature")
-    
-    # Getting file name
-    sstFileName <- file.path(pathTemp,"noaacrwsstDaily_2013.nc")
-    
-    # ncdf4 to check
-    nc <- nc_open(sstFileName)
-    print(nc)
-    nc$dim
-    
-    # Terra brick to access data
-    sstR <- rast(sstFileName, subds = "analysed_sst")
-    sstR[[1]]
-    plot(sstR[[1]])
-    plot(sstR[[90]])
-    plot(sstR[[180]])
-    plot(sstR[[270]])
-    
+  
     # Over the ten years data: quantiles 5. Thresholds from there, like the biological data. same method
-    # We know different SSTs are highly correlated so anyone will work. let's take the mean of the coldest month why not ?
+    # We know different SSTs (min, mean, max) are highly correlated so anyone will work. annual mean SST will do to provide the background regime of the site/stations
+    # "Compared to the last decade at this site, was this year cooler/normal/warmer ?
+    # Anomaly magnitude discretized into 5 states:
+    # -Very cool regime
+    # -Slightly cool regime
+    # -Near usual
+    # -Slightly warm regime
+    # -Very warm regime
+    # The anomaly is evaluated through the site quantiles and an ecologically relevant hybrid threshold of 0.3 
+    
+    # Trying map from purrr package (apply a function to each element of a vector)
+    # Reading raw data, compute annual mean on all raster cells and store the annual mean rasters per year inside a list
+    yea <- 2002:2024
+    annual_mean_sst <- function(year) {
+      
+      message("Reading file for year ",year)
+      r <- rast(file.path(pathTemp, paste0("noaacrwsstDaily_", year, ".nc")), subds = "analysed_sst")
+      
+      message("calculating annual mean")
+      res <- mean(r)
+      message("Done")
+      
+      return(res)
+    }
+    
+    # Applying function
+    annualSSTMeanBrick <- map(yea, annual_mean_sst)
+    names(annualSSTMeanBrick) <- yea
+    # plot(annualSSTMeanBrick[[1]])
+    # plot(annualSSTMeanBrick[[4]])
+    
+    # Now we have a list of single rasters with averaged cell values over their year.
+    
+    # Extracting station annual SST means
+    # Function
+    extract_sst_year <- function(year, annual_mean_list, stations_sf) {
+      
+      r <- annual_mean_list[[as.character(year)]]
+
+      vals <- terra::extract(r, vect(stations_sf), search_radius = 12000) #2 cell large~ 
+      
+      tibble(
+        site = stations_sf$Site,
+        station = stations_sf$Station,
+        year = year,
+        annual_mean_SST = vals[,2]
+      )
+    }
+    
+    # Create the Station level annual mean SST time series
+    sst_station_year <- map_df(yea, extract_sst_year, 
+                                annual_mean_list = annualSSTMeanBrick,
+                                stations_sf = stationsRorc)
+    
+    
+    # plot(annualSSTMeanBrick[[1]])
+    # replot(annualSSTMeanBrick[[1]])
+    # plot(st_geometry(stationsRorc), add = TRUE, pch = 3)
+    # text(st_coordinates(stationsRorc),
+    #      labels = stationsRorc$Station,
+    #      pos = 3, cex = 0.6)
+    
+    
+    # aggregate the station time series to site time series
+    sst_site_year <- sst_station_year %>%
+      group_by(site, year) %>%
+      summarise(
+        annual_mean_SST = mean(annual_mean_SST, na.rm = TRUE),
+        .groups = "drop"
+      )
+    
+    
+    # Now let's compute the 10 yearss prior baseline for each year for each site
+    compute_baseline <- function(df) {
+      df %>%
+        arrange(site, year) %>%
+        group_by(site) %>%
+        mutate(
+          baseline_10yr =
+            sapply(seq_along(year), function(i) {
+              # years strictly before current year
+              past_vals <- annual_mean_SST[max(1, i-10):(i-1)]
+              
+              if(length(past_vals) < 10) return(NA)  # avoid fragile small windows
+              
+              mean(past_vals, na.rm = TRUE)
+            })
+        ) %>%
+        ungroup()
+    }
+    
+    # Computing baselines
+    sst_site_year <- compute_baseline(sst_site_year)
+    
+    # Now computing the anomaly of temperature between year observed and 10 year baseline:
+    sst_site_year <- sst_site_year %>%
+      mutate(
+        anomaly = annual_mean_SST - baseline_10yr
+      )
+    
+    # Setting the hybrid delta threshold over which we can trigger a state change (0.3 degrees)
+    # Ref of 0.3 degrees on mean annual SST for coral reefs :
+    # 
+    delta <- 0.3
+    
+    # Getting to quantiles:
+    # What's the quantile sequence to get evenly spaced values ?
+    # Deciles of appropriate choice for wide central usual region and narrow truly extreme tails
+    # That gives 10,30,70,90 instead of 20,40,60,80 for equal quantiles 
+    seq(0,1,1/(5))
+    
+    quantiles_site <- sst_site_year %>%
+      group_by(site) %>%
+      summarise(
+        q10 = quantile(anomaly, 0.1, na.rm = TRUE),
+        q30 = quantile(anomaly, 0.3, na.rm = TRUE),
+        q70 = quantile(anomaly, 0.7, na.rm = TRUE),
+        q90 = quantile(anomaly, 0.9, na.rm = TRUE),
+        .groups = "drop"
+      )
+    
+    # And finally getting the states for the temperature data for each site:
+    # join quantiles and classify with hybrid rule
+    sst_site_year <- sst_site_year %>%
+      left_join(quantiles_site, by = "site") %>%
+      mutate(
+        SST_regime_state = case_when(
+          
+          # --- VERY COOL REGIME ---
+          anomaly < q10 & anomaly <= -delta ~ "Very cool regime",
+          
+          # --- SLIGHTLY COOL REGIME ---
+          anomaly >= q10 & anomaly < q30 ~ "Slightly cool regime",
+          anomaly < q10 & abs(anomaly) < delta ~ "Slightly cool regime",
+          
+          # --- USUAL REGIME ---
+          anomaly >= q30 & anomaly <= q70 & abs(anomaly) < delta ~ "Usual regime",
+          
+          # --- SLIGHTLY WARM REGIME ---
+          anomaly > q70 & anomaly <= q90 ~ "Slightly warm regime",
+          anomaly > q90 & anomaly < delta ~ "Slightly warm regime",
+          
+          # --- VERY WARM REGIME ---
+          anomaly > q90 & anomaly >= delta ~ "Very warm regime",
+          
+          TRUE ~ NA_character_
+        )
+      )
+    
+    sst_site_year_states <- sst_site_year[sst_site_year$year >2012,]
+    
+    write.csv(sst_site_year_states, file = file.path(pathPro,"RORC_Env_TemperatureRegime_Site_States_hdbn.csv"), row.names = FALSE)
+    
+    # eo temperature ----
+    
+    
+  # CHLOROPHYL-A ----
+    
+    # Read data
+    
     
     
   # HEATWAVES ----
@@ -298,6 +470,9 @@ source("Scripts/00_Initialisation.R")
     # SAVE
     dir.create(file.path(pathDat, "01_Processed","Environment","Cyclones"), showWarnings = FALSE)
     st_write(storm_polygons, dsn = file.path(pathDat, "01_Processed","Environment","Cyclones"), layer = "Cyclones_SP_R34_Influence_2013-2025.shp", driver = "ESRI Shapefile", append = FALSE) 
+    
+    
+    # 
     
     
   # COTS OUTBREAKS ----
@@ -456,5 +631,23 @@ source("Scripts/00_Initialisation.R")
     # names(nc$var)
     # ra <- rast(file.path(pathEnv,"Cyclones","IBTrACS.SP.v04r01.nc"), subds = "name")
     
-    
+    # # Getting file name
+    # sstFileName <- file.path(pathTemp,"noaacrwsstDaily_2013.nc")
+    # 
+    # # ncdf4 to check
+    # nc <- nc_open(sstFileName)
+    # print(nc)
+    # nc$dim
+    # 
+    # # Terra brick to access data
+    # sstR <- rast(sstFileName, subds = "analysed_sst")
+    # sstR[[1]]
+    # plot(sstR[[1]])
+    # plot(sstR[[2]])
+    # plot(sstR[[3]])
+    # plot(sstR[[4]])
+    # plot(sstR[[90]])
+    # plot(sstR[[180]])
+    # plot(sstR[[270]])
+    # 
     

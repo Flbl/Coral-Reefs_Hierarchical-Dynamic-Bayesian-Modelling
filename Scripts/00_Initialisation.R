@@ -314,3 +314,13 @@ download_erddap_yearly <- function(
   message("All requested years processed.")
 }
 
+
+# Replot extents of a map in the graphical RSTUDIO HUD
+replot <- function(x) {
+  plot(x)
+  pts <- locator(n = 2)
+  xlimits <- range(pts$x) #BOTTOM LEFT
+  ylimits <- range(pts$y) #TOP RIGHT
+  plot(x, xlim = xlimits, ylim = ylimits)
+  
+}
