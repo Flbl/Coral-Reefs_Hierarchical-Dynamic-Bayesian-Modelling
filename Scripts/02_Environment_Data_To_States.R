@@ -163,14 +163,13 @@ source("Scripts/00_Initialisation.R")
     
     # Read data, check time series, extract values for each station, get the quantiles as threshold
   
-    # 5 states : well below, below, average, over, well over
-    # 3 states because otherwise CPT explosion
     # Reading files
     # Creating simple path
     pathTemp <- file.path(pathEnv, "Temperature")
   
     # Over the ten years data: quantiles 5. Thresholds from there, like the biological data. same method
     # We know different SSTs (min, mean, max) are highly correlated so anyone will work. annual mean SST will do to provide the background regime of the site/stations
+    # 5 states : temperature regime for the year compared to its last 10 years: very cool, slightly cool, usual, slightly warm, very warm
     # "Compared to the last decade at this site, was this year cooler/normal/warmer ?
     # Anomaly magnitude discretized into 5 states:
     # -Very cool regime
@@ -205,7 +204,7 @@ source("Scripts/00_Initialisation.R")
     
     # Extracting station annual SST means
     # Function
-    extract_sst_year <- function(year, annual_mean_list, stations_sf) {
+    extract_year <- function(year, annual_mean_list, stations_sf) {
       
       r <- annual_mean_list[[as.character(year)]]
 
@@ -215,12 +214,12 @@ source("Scripts/00_Initialisation.R")
         site = stations_sf$Site,
         station = stations_sf$Station,
         year = year,
-        annual_mean_SST = vals[,2]
+        annual_mean = vals[,2]
       )
     }
     
     # Create the Station level annual mean SST time series
-    sst_station_year <- map_df(yea, extract_sst_year, 
+    sst_station_year <- map_df(yea, extract_year, 
                                 annual_mean_list = annualSSTMeanBrick,
                                 stations_sf = stationsRorc)
     
@@ -237,7 +236,7 @@ source("Scripts/00_Initialisation.R")
     sst_site_year <- sst_station_year %>%
       group_by(site, year) %>%
       summarise(
-        annual_mean_SST = mean(annual_mean_SST, na.rm = TRUE),
+        annual_mean_SST = mean(annual_mean, na.rm = TRUE),
         .groups = "drop"
       )
     
@@ -272,6 +271,9 @@ source("Scripts/00_Initialisation.R")
     
     # Setting the hybrid delta threshold over which we can trigger a state change (0.3 degrees)
     # Ref of 0.3 degrees on mean annual SST for coral reefs :
+    # Coral reef Watch documentation on SST anomalies stating +-0.2°C is accuracy bias 
+    # https://coralreefwatch.noaa.gov/product/5km/methodology.php#sst
+    # and cite 1-2 paper on 0.3
     # 
     delta <- 0.3
     
@@ -328,11 +330,161 @@ source("Scripts/00_Initialisation.R")
     
   # CHLOROPHYL-A ----
     
+    # Cholorophyl-a levels here are similar to the sst regime
+    # We don't want "high, good or bad" but whether the background regime was unusually low or high compared to the baseline
+    # We need a delta to work with the time series to express bias and usual ecological change
+    # The Copernicus manual on the dataset states that the ubRMSD (only viable indicator for log transformed chla data) is the right oneand equals 0.34 mg/m³
+    # So we'll use the same logic with a delta = 0.34 and then make 5 states with quantiles 10-30-70-90 with rules <q10 & > delta = very unproductive year
+    # 0.34 apparently is quite high for coral reef oligotrophy (0.01-0.15~~ to validate) so a change outside the delta could already be considered ("slight" states)
+    # Read data, check time series, extract values for each station, get the quantiles as threshold
+    
+    # Reading files
+    # Creating simple path
+    pathChla <- file.path(pathEnv, "Chlorophyll_a")
+    
     # Read data
+    # 2002-2012 period
+    r <- rast(file.path(pathChla, paste0("cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D_multi-vars_155.02E-174.98E_26.98S-14.02S_2002-01-01-2012-12-31.nc")), subds = "CHL")
+    # 2013-2024 period
+    r2 <- rast(file.path(pathChla, paste0("cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D_multi-vars_155.02E-174.98E_26.98S-14.02S_2013-01-01-2024-12-31.nc")), subds = "CHL")
+    
+    # Plot
+    # plot(r2[[160]])
+    
+    # get dates
+    rDates  <- time(r)
+    r2Dates <- time(r2)
+    
+    # split timeseries into yearly list
+    # Baseline (2002-2012)
+    rYears <- split(r, year(rDates))
+    names(rYears) <- as.character(unique(year(rDates)))
+    # Model timeline (2013-2024)
+    r2Years <- split(r2, year(r2Dates))
+    names(r2Years) <- as.character(unique(year(r2Dates)))
+    
+    # Convert daily data per year into yearly average
+    rYears <- lapply(rYears, mean, na.rm = TRUE) #small data error with only NaN on the 2002/12/31 so we remove it
+    r2Years <- lapply(r2Years, mean)
     
     
+    # Extract values
+    # Create the Station level annual mean SST time series
+    # Baseline
+    chl_station_year <- map_df(names(rYears), extract_year, 
+                               annual_mean_list = rYears,
+                               stations_sf = stationsRorc)
     
-  # HEATWAVES ----
+    # Model timeframe
+    chl_station_year2 <- map_df(names(r2Years), extract_year, 
+                               annual_mean_list = r2Years,
+                               stations_sf = stationsRorc)
+    
+    chl_station_year <- rbind(chl_station_year, chl_station_year2)
+    
+    # plot(r2Years[[2]])
+    # replot(annualSSTMeanBrick[[1]])
+    # plot(st_geometry(stationsRorc), add = TRUE, pch = 3)
+    # text(st_coordinates(stationsRorc),
+    #      labels = stationsRorc$Station,
+    #      pos = 3, cex = 0.6)
+    
+    
+    # aggregate the station time series to site time series
+    chl_site_year <- chl_station_year %>%
+      group_by(site, year) %>%
+      summarise(
+        annual_mean_CHL = mean(annual_mean, na.rm = TRUE),
+        .groups = "drop"
+      )
+    
+    
+    # Now let's compute the 10 yearss prior baseline for each year for each site
+    compute_baseline <- function(df) {
+      df %>%
+        arrange(site, year) %>%
+        group_by(site) %>%
+        mutate(
+          baseline_10yr =
+            sapply(seq_along(year), function(i) {
+              # years strictly before current year
+              past_vals <- annual_mean_CHL[max(1, i-10):(i-1)]
+              
+              if(length(past_vals) < 10) return(NA)  # avoid fragile small windows
+              
+              mean(past_vals, na.rm = TRUE)
+            })
+        ) %>%
+        ungroup()
+    }
+    
+    # Computing baselines
+    chl_site_year <- compute_baseline(chl_site_year)
+    
+    # Now computing the anomaly of CHL between year observed and 10 year baseline:
+    chl_site_year <- chl_site_year %>%
+      mutate(
+        anomaly = annual_mean_CHL - baseline_10yr
+      )
+    
+    # Setting the hybrid delta threshold over which we can trigger a state change
+    # Threshold here is 0.31 as ubRMSD of the GLO chl daily data method (accuracy indicator)
+    delta <- 0.31
+    
+    # Getting to quantiles:
+    # What's the quantile sequence to get evenly spaced values ?
+    # Deciles of appropriate choice for wide central usual region and narrow truly extreme tails
+    # That gives 10,30,70,90 instead of 20,40,60,80 for equal quantiles 
+    seq(0,1,1/(5))
+    
+    quantiles_site <- chl_site_year %>%
+      group_by(site) %>%
+      summarise(
+        q10 = quantile(anomaly, 0.1, na.rm = TRUE),
+        q30 = quantile(anomaly, 0.3, na.rm = TRUE),
+        q70 = quantile(anomaly, 0.7, na.rm = TRUE),
+        q90 = quantile(anomaly, 0.9, na.rm = TRUE),
+        .groups = "drop"
+      )
+    
+    # And finally getting the states for the temperature data for each site:
+    # join quantiles and classify with hybrid rule
+    chl_site_year <- chl_site_year %>%
+      left_join(quantiles_site, by = "site") %>%
+      mutate(
+        CHL_regime_state = case_when(
+          
+          # --- VERY COOL REGIME ---
+          anomaly < q10 & anomaly <= -delta ~ "Very low regime",
+          
+          # --- SLIGHTLY COOL REGIME ---
+          anomaly >= q10 & anomaly < q30 ~ "Slightly low regime",
+          anomaly < q10 & abs(anomaly) < delta ~ "Slightly low regime",
+          
+          # --- USUAL REGIME ---
+          anomaly >= q30 & anomaly <= q70 & abs(anomaly) < delta ~ "Usual regime",
+          
+          # --- SLIGHTLY WARM REGIME ---
+          anomaly > q70 & anomaly <= q90 ~ "Slightly high regime",
+          anomaly > q90 & anomaly < delta ~ "Slightly high regime",
+          
+          # --- VERY WARM REGIME ---
+          anomaly > q90 & anomaly >= delta ~ "Very high regime",
+          
+          TRUE ~ NA_character_
+        )
+      )
+    
+    chl_site_year_states <- chl_site_year[chl_site_year$year >2012,]
+    
+    write.csv(sst_site_year_states, file = file.path(pathPro,"RORC_Env_ChlorophyllaRegime_Site_States_hdbn.csv"), row.names = FALSE)
+    
+    # eo chlorophyll a ----
+    
+    
+
+    
+  # "HEATWAVES" ----
     # Bleaching alert Area of the Coral Reef Watch
     # Simplifying the stress levels into three states:
     # No alert (first 1-3 levels)

@@ -65,6 +65,7 @@ if(init1 == "02_Environment_Data_To_States.R") {
   # Travel time
   # This package will install pretty much all other needed packages for SIG processing
   if (!require("purrr")) install.packages("purrr")
+  if (!require("lubridate")) install.packages("lubridate")
   if (!require("ncdf4")) install.packages("ncdf4")
   if (!require("terra")) install.packages("terra")
   if (!require("stars")) install.packages("stars")
