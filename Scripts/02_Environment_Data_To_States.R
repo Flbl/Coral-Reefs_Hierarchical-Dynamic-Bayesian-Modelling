@@ -351,50 +351,126 @@ source("Scripts/00_Initialisation.R")
     # Plot
     # plot(r2[[160]])
     
-    # get dates
-    rDates  <- time(r)
-    r2Dates <- time(r2)
+    # get dates in year-month
+    rDates  <- format(time(r), "%Y-%m")
+    r2Dates <- format(time(r2), "%Y-%m")
     
-    # split timeseries into yearly list
-    # Baseline (2002-2012)
-    rYears <- split(r, year(rDates))
-    names(rYears) <- as.character(unique(year(rDates)))
-    # Model timeline (2013-2024)
-    r2Years <- split(r2, year(r2Dates))
-    names(r2Years) <- as.character(unique(year(r2Dates)))
+    # Compute monthly mean
+    rYearsMonthlyMean <- tapp(r, rDates, fun = mean, na.rm = TRUE) 
+    # plot(rYearsMonthlyMean[[12]])
+    # values(rYearsMonthlyMean)
+    r2YearsMonthlyMean <- tapp(r2, r2Dates, fun = mean, na.rm = TRUE) 
     
-    # Convert daily data per year into yearly average
-    rYears <- lapply(rYears, mean, na.rm = TRUE) #small data error with only NaN on the 2002/12/31 so we remove it
-    r2Years <- lapply(r2Years, mean)
+    # Log-transform monthly CHL because copernicus chl product is log-narmally distributed
+    #  + 1e-6 to avoid zero just in case
+    rYearsMonthlyMean  <- log10(rYearsMonthlyMean  + 1e-6)
+    r2YearsMonthlyMean <- log10(r2YearsMonthlyMean + 1e-6)
+    
+    # # Get year and month vectors
+    # rYear <- year(rDates)
+    # rMonth <- month(rDates)
+    # r2Year <- year(r2Dates)
+    # r2Month <- month(r2Dates)
+    # 
+    # # split timeseries into yearly list
+    # # Baseline (2002-2012)
+    # rYearsMonth <- split(r, list(rYear, rMonth))
+    # names(rYears) <- as.character(unique(year(rDates)))
+    # # Model timeline (2013-2024)
+    # r2Years <- split(r2, year(r2Dates))
+    # names(r2Years) <- as.character(unique(year(r2Dates)))
+    # 
+    # # Convert daily data per year into yearly average
+    # rYears <- lapply(rYears, mean, na.rm = TRUE) #small data error with only NaN on the 2002/12/31 so we remove it
+    # r2Years <- lapply(r2Years, mean)
+    
+    # Remove the "X" from names to get only Year.Month
+    names(rYearsMonthlyMean) <- gsub("X","",names(rYearsMonthlyMean))
+    names(r2YearsMonthlyMean) <- gsub("X","",names(r2YearsMonthlyMean))
+    
+    get_r_year <- function(x) substr(names(x),1,4) #character 1 to 4 = year (e.g. 2002.01)
+    # get_r_year(rYearsMonthlyMean[[1]])
+    
+    # split monthly rasters by year and assign list names
+    rYearsMonthlyMeanList  <- split(rYearsMonthlyMean,  get_r_year(rYearsMonthlyMean))
+    names(rYearsMonthlyMeanList) <- unique(get_r_year(rYearsMonthlyMean))
+    r2YearsMonthlyMeanList <- split(r2YearsMonthlyMean, get_r_year(r2YearsMonthlyMean))
+    names(r2YearsMonthlyMeanList) <- unique(get_r_year(r2YearsMonthlyMean))
     
     
-    # Extract values
-    # Create the Station level annual mean SST time series
-    # Baseline
-    chl_station_year <- map_df(names(rYears), extract_year, 
-                               annual_mean_list = rYears,
-                               stations_sf = stationsRorc)
+    # Function to extract top three year
+    extract_top3_year <- function(year, monthly_list, stations_sf, radius = 12000, nbMonth = 3) {
+      # Test zone
+      # year = "2013"
+      # monthly_list = r2YearsMonthlyMeanList
+      # stations_sf = stationsRorc
+      # radius = 12000
+      # nbMonth = 3
+      # eo tz
+      
+      r_year <- monthly_list[[as.character(year)]]
+      
+      # extract each monthly layer separately (required for search_radius)
+      vals_list <- lapply(1:nlyr(r_year), function(i) {
+        terra::extract(
+          r_year[[i]],
+          vect(stations_sf),
+          search_radius = radius,
+          na.rm = TRUE
+        )[,2]   # drop ID column
+      })
+      
+      # bind months column-wise → stations × 12 matrix
+      vals_mat <- do.call(cbind, vals_list)
+      
+      # compute top-3 monthly mean per station
+      # apply iterates over a matrix
+      # 1 = row-wise (2 = column wise)
+      top3_mean <- apply(vals_mat, 1, function(x) {
+        # x = one station's 12 monthly values
+        # We remove potential missing months (although here we know there aren't any)
+        x <- x[!is.na(x)]
+        # We enforce a small data requirement (statistics not meaningful if data exist for less than three months over the year) (yeah it's heavy shielded)
+        if (length(x) < 3) return(NA_real_) #NA_real_ ensures numeric NA
+        # We sort the 12 months by descending magnitude
+        # We lost the names/if its the same months over the different stations/years but it doesn't really matter as we state:
+        # "We want the mean of the top 3 most productive months", it can be any non consecutive month out of the 12  
+        mean(sort(x, decreasing = TRUE)[1:nbMonth])
+      })
+      
+      tibble::tibble(
+        site     = stations_sf$Site,
+        station = stations_sf$Station,
+        year     = as.integer(year),
+        chl_top3_log = top3_mean
+      )
+    }
     
-    # Model timeframe
-    chl_station_year2 <- map_df(names(r2Years), extract_year, 
-                               annual_mean_list = r2Years,
-                               stations_sf = stationsRorc)
+    # Baseline period
+    chl_station_year <- purrr::map_df(
+      names(rYearsMonthlyMeanList),
+      extract_top3_year,
+      monthly_list = rYearsMonthlyMeanList,
+      stations_sf  = stationsRorc,
+      nbMonth = 3
+    )
     
-    chl_station_year <- rbind(chl_station_year, chl_station_year2)
+    # Model period
+    chl_station_year2 <- purrr::map_df(
+      names(r2YearsMonthlyMeanList),
+      extract_top3_year,
+      monthly_list = r2YearsMonthlyMeanList,
+      stations_sf  = stationsRorc,
+      nbMonth = 3
+    )
     
-    # plot(r2Years[[2]])
-    # replot(annualSSTMeanBrick[[1]])
-    # plot(st_geometry(stationsRorc), add = TRUE, pch = 3)
-    # text(st_coordinates(stationsRorc),
-    #      labels = stationsRorc$Station,
-    #      pos = 3, cex = 0.6)
-    
+    chl_station_year <- bind_rows(chl_station_year, chl_station_year2)
     
     # aggregate the station time series to site time series
     chl_site_year <- chl_station_year %>%
       group_by(site, year) %>%
       summarise(
-        annual_mean_CHL = mean(annual_mean, na.rm = TRUE),
+        chl_top3_log = mean(chl_top3_log, na.rm = TRUE),
         .groups = "drop"
       )
     
@@ -408,7 +484,7 @@ source("Scripts/00_Initialisation.R")
           baseline_10yr =
             sapply(seq_along(year), function(i) {
               # years strictly before current year
-              past_vals <- annual_mean_CHL[max(1, i-10):(i-1)]
+              past_vals <- chl_top3_log[max(1, i-10):(i-1)]
               
               if(length(past_vals) < 10) return(NA)  # avoid fragile small windows
               
@@ -424,12 +500,14 @@ source("Scripts/00_Initialisation.R")
     # Now computing the anomaly of CHL between year observed and 10 year baseline:
     chl_site_year <- chl_site_year %>%
       mutate(
-        anomaly = annual_mean_CHL - baseline_10yr
+        anomaly = chl_top3_log - baseline_10yr
       )
     
     # Setting the hybrid delta threshold over which we can trigger a state change
     # Threshold here is 0.31 as ubRMSD of the GLO chl daily data method (accuracy indicator)
-    delta <- 0.31
+    # /!\ ubRMSD is actually the validation between in situ and satellite. not the accuracy of the model ?
+    # Need to check 
+    delta <- 0.34
     
     # Getting to quantiles:
     # What's the quantile sequence to get evenly spaced values ?
@@ -454,21 +532,21 @@ source("Scripts/00_Initialisation.R")
       mutate(
         CHL_regime_state = case_when(
           
-          # --- VERY COOL REGIME ---
+          # --- VERY low REGIME ---
           anomaly < q10 & anomaly <= -delta ~ "Very low regime",
           
-          # --- SLIGHTLY COOL REGIME ---
+          # --- SLIGHTLY low REGIME ---
           anomaly >= q10 & anomaly < q30 ~ "Slightly low regime",
           anomaly < q10 & abs(anomaly) < delta ~ "Slightly low regime",
           
           # --- USUAL REGIME ---
           anomaly >= q30 & anomaly <= q70 & abs(anomaly) < delta ~ "Usual regime",
           
-          # --- SLIGHTLY WARM REGIME ---
+          # --- SLIGHTLY high REGIME ---
           anomaly > q70 & anomaly <= q90 ~ "Slightly high regime",
           anomaly > q90 & anomaly < delta ~ "Slightly high regime",
           
-          # --- VERY WARM REGIME ---
+          # --- VERY high REGIME ---
           anomaly > q90 & anomaly >= delta ~ "Very high regime",
           
           TRUE ~ NA_character_
@@ -477,7 +555,7 @@ source("Scripts/00_Initialisation.R")
     
     chl_site_year_states <- chl_site_year[chl_site_year$year >2012,]
     
-    write.csv(sst_site_year_states, file = file.path(pathPro,"RORC_Env_ChlorophyllaRegime_Site_States_hdbn.csv"), row.names = FALSE)
+    write.csv(chl_site_year_states, file = file.path(pathPro,"RORC_Env_ChlorophyllaRegime_Site_States_hdbn.csv"), row.names = FALSE)
     
     # eo chlorophyll a ----
     
@@ -495,7 +573,7 @@ source("Scripts/00_Initialisation.R")
     pathHeat <- file.path(pathEnv, "Heatwaves_BAA")
     
     # Getting file name
-    baaFileName <- file.path(pathHeat,"noaacrwbaa7dDaily_2013.nc")
+    baaFileName <- file.path(pathHeat,"noaacrwbaa7dDaily_2022.nc")
     
     # ncdf4 to check
     nc <- nc_open(baaFileName)
@@ -505,6 +583,7 @@ source("Scripts/00_Initialisation.R")
     # Terra brick to access data
     baaR <- rast(baaFileName, subds = "bleaching_alert_area")
     baaR[[1]]
+    plot(baaR[[1]])
     plot(baaR[[350]])
     
     
