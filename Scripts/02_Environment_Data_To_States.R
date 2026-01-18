@@ -29,7 +29,17 @@ source("Scripts/00_Initialisation.R")
 
   
 # GET DATA -----
+    
+  # GET ONI INDEX (EL NINO EL NINA PHASES) ----
   
+  # We use the noaa historical metrics that we manually enter into a R dataframe to relate yearly main phase from the dataset on their main website
+  # Check https://www.cpc.ncep.noaa.gov/products/analysis_monitoring/ensostuff/ONI_v5.php
+  # Check https://ggweather.com/enso/oni.htm
+
+    # eo get oni index (el nino el nina phases) ----
+
+
+
   # GET TEMPERATURE ----
   
   # We'll use the Coral Temp from the CRW datasets (5km res)
@@ -158,6 +168,38 @@ source("Scripts/00_Initialisation.R")
     
     # eo read biological data for station assignation ----
 
+  
+  # ONI INDICATOR FOR EL NINO EL NINA GENERAL ----
+  
+  # Check https://www.cpc.ncep.noaa.gov/products/analysis_monitoring/ensostuff/ONI_v5.php
+  # There are three possible phases: Nino, Neutral, Nina
+  # Make a table with rules:
+  # If a year only shows one major phase, then its assigned to the phase
+  # If there are 2 or more phases in the same year, check values and assign the most important
+  # Check https://ggweather.com/enso/oni.htm
+  # for appreciation
+  
+  ninoa <- data.frame(Year = c(2013:2024),
+                      State = c(
+                        "Neutral",
+                        "Neutral",
+                        "El Nino",
+                        "El Nino",
+                        "El Nina",
+                        "El Nino",
+                        "El Nino",
+                        "El Nina",
+                        "El Nina",
+                        "El Nina",
+                        "El Nino",
+                        "El Nino"
+                      ))
+  
+  ninoa
+  
+  dir.create(file.path(pathDat, "01_Processed","Environment","OceaniNinoIndex"), showWarnings = FALSE)
+  write.csv(ninoa, file.path(pathDat, "01_Processed","Environment","OceaniNinoIndex","Env_General_ONI_New_Caledonia.csv"), row.names = FALSE)
+  
 
   # TEMPERATURE ----
     
@@ -323,7 +365,9 @@ source("Scripts/00_Initialisation.R")
     
     sst_site_year_states <- sst_site_year[sst_site_year$year >2012,]
     
-    write.csv(sst_site_year_states, file = file.path(pathPro,"RORC_Env_TemperatureRegime_Site_States_hdbn.csv"), row.names = FALSE)
+    dir.create(file.path(pathDat, "01_Processed","Environment","Temperature"), showWarnings = FALSE)
+
+    write.csv(sst_site_year_states, file = file.path(pathDat, "01_Processed","Environment","Temperature","RORC_Env_TemperatureRegime_Site_States_hdbn.csv"), row.names = FALSE)
     
     # eo temperature ----
     
@@ -573,68 +617,174 @@ source("Scripts/00_Initialisation.R")
     pathHeat <- file.path(pathEnv, "Heatwaves_BAA")
     
     # Getting file name
-    baaFileName <- file.path(pathHeat,"noaacrwbaa7dDaily_2022.nc")
-    
-    # ncdf4 to check
-    nc <- nc_open(baaFileName)
-    print(nc)
-    nc$dim
-    
+    baaFileName <- file.path(pathHeat,"noaacrwbaa7dDaily_2019.nc")
+
     # Terra brick to access data
     baaR <- rast(baaFileName, subds = "bleaching_alert_area")
-    baaR[[1]]
-    plot(baaR[[1]])
-    plot(baaR[[350]])
+    # baaR[[1]]
+    plot(baaR[[1:12]])
+    plot(baaR[[181:192]])
+    plot(baaR[[90]])
     
+    # On linux there are problems of raster orientation but on windows there isn't
+    # fix_orientation <- function(r) {
+    #   y <- terra::yFromRow(r)
+    #   if (y[1] > y[length(y)]) {
+    #     r <- terra::flip(r, "vertical")
+    #   }
+    #   r
+    # }
+    # plot(baaR[[1]])
+    # plot(fix_orientation(baaR[[1]]))
+
+    # for each year, extract the max value
+    # Create the year vector
+    yea <- 2013:2024
+
+    # Storing yearly data into a list 
+    annualDailyBaaBrick <- lapply(yea, function(x) rast(file.path(pathHeat, paste0("noaacrwbaa7dDaily_", x, ".nc")), subds = "bleaching_alert_area"))
+    names(annualDailyBaaBrick) <- yea
     
-    fix_orientation <- function(r) {
-      y <- terra::yFromRow(r)
-      if (y[1] > y[length(y)]) {
-        r <- terra::flip(r, "vertical")
-      }
-      r
+    # Extracting station max baa value for each year
+    # Function
+    extract_baa_year <- function(year, annualdaily_list, stations_sf, radius = 12000) {
+      # Test zone
+      # year = "2013"
+      # annualdaily_list = annualDailyBaaBrick
+      # stations_sf = stationsRorc
+      # radius = 12000
+      # eo tz
+      
+      
+      r <- annualdaily_list[[as.character(year)]]
+      
+      # extract each monthly layer separately (required for search_radius)
+      vals_list <- lapply(1:nlyr(r), function(i) {
+        terra::extract(
+          r[[i]],
+          vect(stations_sf),
+          # fun = max,
+          search_radius = radius,
+          na.rm = TRUE
+        )[,2]   # drop ID column
+      })
+      
+      # bind months column-wise → stations × 12 matrix
+      vals_mat <- do.call(cbind, vals_list)
+      
+      # Extract max
+      maxBaa <- apply(vals_mat, 1, function(x) {
+        # # x = one station 365-366 daily value
+        # # We remove potential missing data
+        # x <- x[!is.na(x)]
+        # We extract the max
+        max(x, na.rm = TRUE)
+      })
+      
+
+      tibble(
+        site = stations_sf$Site,
+        station = stations_sf$Station,
+        year = year,
+        annual_max_BAA = maxBaa
+      )
     }
     
-    plot(fix_orientation(baaR[[1]]))
-    
-    plot(flip(baaR[[350]], direction = "vertical"))
-    terra::ext(baaR)
-    ext(sstR)
-    terra::ylabel(baaR)
-    
-    nc <- nc_open(file.path(pathDat,"Environment","CRW","crw_baa_2013_2018.nc"))
-    print(nc)
-    names(nc$var)
-    ncvar_get(nc, "bleaching_alert_area")
+    # Create the Station level annual mean SST time series
+    baa_station_year <- map_df(yea, extract_baa_year, 
+                               annualdaily_list = annualDailyBaaBrick,
+                               stations_sf = stationsRorc)
     
     
     
-    nc <- nc_open(file.path(pathDat,"Environment","CRW","noaacrwdhwDaily_b396_7599_f8b5.nc"))
-    nc <- nc_open(file.path(pathDat,"Environment","CRW","noaacrwdhwDaily_83e9_2084_6dff.nc"))
+    # Levels for states:
+    # No alert (first 1-3 levels) = 0-2
+    # Bleaching (Alert 1-2) = 3-4
+    # Mortality (Alert 3-5) = 5-7
+    
+    baa_station_year <- baa_station_year%>%
+      mutate(
+        State = case_when(
+          annual_max_BAA %in% c(0:2) ~ "No alert",
+          annual_max_BAA %in% c(3:4) ~ "Bleaching alert",
+          annual_max_BAA %in% c(5:7) ~ "Mortality alert",
+          TRUE ~ NA_character_
+        )
+      )
+    
+    dir.create(file.path(pathDat, "01_Processed","Environment","Heawaves_BAA"), showWarnings = FALSE)
+    write.csv(baa_station_year, file.path(pathDat, "01_Processed","Environment","Heawaves_BAA","Env_HeatwavesBAA_Station_States_New_Caledonia.csv"), row.names = FALSE)
     
     
-    # eo heatwaves ----
+    # eobaaR# eo heatwaves ----
     
-    ra <- rast(file.path(pathDat,"Environment","Chlorophyll_a","noaacwNPPVIIRSSQchlaDaily_8938_b7ee_2602.nc"), subds = "chlor_a")
-    plot(flip(ra[[2]], direction = "vertical"))
-    
-    
-    
-    
+
     
   # CYCLONES ----
-    # Read cyclone tracks
-    # cyc <- st_read(file.path(pathEnv, "Cyclones"), layer = "IBTrACS.SP.list.v04r01.points")
-    cyc <- st_read(file.path(pathEnv, "Cyclones","IBTrACS.SP.list.v04r01.points.shp"))
+    # Use presence/absence data at the general scale because waves
+    # AND station node with R34 because waves+wind = damage
+    
+    # ---
+    # Read raw open data base and extract New Caledonia cyclone tracks (DONE ONCE), then we read directly the new caledonia cyclone file
+    # cyc <- st_read(file.path(pathEnv, "Cyclones","IBTrACS.SP.list.v04r01.points.shp"))
+    # 
+    # # Creating bounding box to filter only New Caledonia
+    # ncBbox <- st_bbox(
+    #   c(
+    #     xmin = 155, ymin = -27, xmax = 175, ymax = -14
+    #     ),
+    #   crs = st_crs(4326)
+    #   )
+    # 
+    # # Convert to sf
+    # ncBboxSf <- st_as_sfc(ncBbox)
+    # 
+    # # Intersect with cyclones
+    # cycNc <- cyc[st_intersects(cyc, ncBboxSf, sparse = FALSE), ]
+    # # plot(st_geometry(cycNc))
+    # 
+    # st_write(cycNc, dsn = file.path(pathDat, "01_Processed","Environment","Cyclones"), layer = "Cyclones_New_Caledonia_IBTrACS.shp", driver = "ESRI Shapefile", append = FALSE) 
+    # ---
+    
+    cyc <- st_read(file.path(pathDat, "01_Processed","Environment","Cyclones","Cyclones_New_Caledonia_IBTrACS.shp"))
     
     # Filtering cyclones within boundaries and between 2013 and 2024
     cyc <- cyc[cyc$year >= 2013,]
     # st_crs(cyc)
     
+    
+    
+    # GET GENERAL COUNT OF STORMS PER YEAR
+    
+    # Count the number of cyclones  per year and 
+    cycCount <- cyc %>%
+      distinct(SEASON, NAME) %>%
+      mutate(CYCLONE = 1) %>%
+      group_by(SEASON) %>%
+      summarise(CYCLONE = sum(CYCLONE))
+      
+    # create states out of it for the general nodes (named "Storms" since it also registers depressions etc)
+    cycCount <- cycCount%>%
+      mutate(
+      State = case_when(
+        CYCLONE %in% c(0) ~ "No Storm",
+        CYCLONE %in% c(1:4) ~ "Moderate Storm Season",
+        CYCLONE %in% c(5:7) ~ "Intense Storm Season",
+        TRUE ~ NA_character_
+        )
+      )
+        
+    # Save !
+    write.csv(cycCount, file.path(pathDat, "01_Processed","Environment","Cyclones","Env_StormCount_General_States_New_Caledonia.csv"), row.names = FALSE)
+    
     # Removing track parts that have NA R34, meaning we consider the depression became "negligible"
     # Potentially add later back points that do not have R34 but USA_WIND values > 34 ?
     quadrantsNames <- c("USA_R34_NE","USA_R34_SE","USA_R34_SW","USA_R34_NW")
     cyc <- cyc[complete.cases(st_drop_geometry(cyc[ , quadrantsNames])), ]
+    
+    
+    
+    # COMPUTE STATION WISE R34 BUFFER 
     
     # cyc radii per quadrant is in nautical miles so we convert them to meter for the buffer
     nmToMeter <- 1852
@@ -696,22 +846,136 @@ source("Scripts/00_Initialisation.R")
       ) |>
       st_make_valid()
       
-    plot(st_geometry(storm_polygons[c(1:9),]))
+    # plot(st_geometry(storm_polygons[c(1:2),]), add = TRUE)
     
     # SAVE
     dir.create(file.path(pathDat, "01_Processed","Environment","Cyclones"), showWarnings = FALSE)
     st_write(storm_polygons, dsn = file.path(pathDat, "01_Processed","Environment","Cyclones"), layer = "Cyclones_SP_R34_Influence_2013-2025.shp", driver = "ESRI Shapefile", append = FALSE) 
     
+    # Create states for station wise direct cyclone passage
+    # Small crs check just in case
+    st_crs(storm_polygons)
+    st_crs(stationsRorc)
     
-    # 
+    # Join bot object through intersection
+    stations_storms <- st_join(
+      stationsRorc,
+      storm_polygons,
+      join = st_intersects,
+      left = TRUE
+    )
+    
+    # Count the number of cyclones per station per year:
+    cyclone_R34_counts <- stations_storms %>%
+      st_drop_geometry() %>% # drop geometry
+      filter(!is.na(SEASON)) %>%        # remove non-intersections
+      group_by(Site, Station, SEASON) %>%
+      summarise(
+        n_cyclones = n(),   # or n(), see note below
+        .groups = "drop"
+      )
+    
+    # Since it was an intersection, some years or stations may have been put aside so we build the grid back
+    # all_years <- sort(unique(storm_polygons$SEASON))
+    
+    cyclone_R34_counts <- expand.grid(
+      # Site    = unique(stationsRorc$Site),
+      Station = unique(stationsRorc$Station),
+      SEASON  = all_years
+    ) %>%
+      left_join(st_drop_geometry(stationsRorc),
+                by = c("Station")) %>%
+      left_join(cyclone_R34_counts,
+                by = c("Site","Station", "SEASON")) %>%
+      mutate(n_cyclones = ifelse(is.na(n_cyclones), 0, n_cyclones))
     
     
-  # COTS OUTBREAKS ----
-    # If even one transect (20 meters * 5 meters) has ACA > 100/ha (>1 per transect of 100sqm)
+    cyclone_R34_States <- cyclone_R34_counts %>%
+      mutate(
+        States = case_when(
+          n_cyclones == 0 ~ "No Storm",
+          n_cyclones == 1 ~ "1 Heavy Storm",
+          n_cyclones >= 2 ~ "Multiple Heavy Storms",
+          TRUE ~ NA_character_
+        )
+      )
+    
+    # WRITE THE STATES !
+    write.csv(cyclone_R34_States, file.path(pathDat, "01_Processed","Environment","Cyclones","Env_R34StormCount_Station_States_New_Caledonia.csv"), row.names = FALSE)
+    
+    
+    
+  # GRAVITY ----
+    # We'll read the gravity shapefile and distinguish eventually the values using quantiles for 2 to three states
+    # (severly, mild, none)
+    pathGrav <- file.path(pathEnv, "Gravity")
+    grav <- rast(file.path(pathEnv, "Gravity","Human_Gravity_NewCaledonia_2019.tif"))
+    plot(grav)
+    # Transform to epsg84
+    stationsRorc_lambert <- st_transform(stationsRorc, st_crs(grav))
+    
+    # extract 
+    gravStates <- stationsRorc %>%
+      st_drop_geometry() %>%
+      mutate(
+        Gravity = terra::extract(grav, stationsRorc_lambert, search_radius = 500)[,2]
+      )
+    
+    # Create states
+    # Taking station's dataset quantiles because the scales are of the station's chart so they'd all be "High" if using the New Caledonia quantiles
+    # seq(0,1,1/(3))
+    # qt <- quantile(values(grav, na.rm = TRUE), seq(0,1,1/(3)))
+    qt <- quantile(gravStates$Gravity, c(1/3,2/3))
+    
+    gravStates <- gravStates %>%
+      mutate(
+        States = case_when(
+          Gravity < qt[1] ~ "Low",
+          Gravity >= qt[1] & Gravity < qt[2] ~ "Moderate",
+          Gravity > qt[2] ~ "High"
+        )
+      )
+    
+    dir.create(file.path(pathDat, "01_Processed","Environment","Gravity"), showWarnings = FALSE)
+    write.csv(gravStates, file.path(pathDat, "01_Processed","Environment","Gravity","Env_Gravity_Station_States_New_Caledonia.csv"), row.names = FALSE)
+    
+    
+    
+  
+    
+    # COTS OUTBREAKS ----
+    # ACA > 100/ha = outbreak
     # See Dumas et al. 2020
+    # So by conversion to 20*5 = 100sqm, then cots >= 1 ==> outbreak) Not good.
+    # So we'll be a bit smoother, we'll count in this case over the 3-4 transects as one because observing only one COTS on 20*5 meters cannot be an indicator of 100COTS/ha
+    # Station wise invasion
+    # We transform transects into a single transect of x meters (20*nbTransects, usually 4)*5 meters wide
+    # Then we compare the surface observed to 100 cots/ha
     
+    cots <- read.csv(file.path(pathEnv, "COTS","RORC_Invertebrate.csv"), header = TRUE)
+    cots <- cots %>%
+      mutate(TransectSurface = 20*5) %>%
+      select(Campagne, Site, Station, Transect, TransectSurface, ACA) %>%
+      group_by(Campagne, Site, Station) %>%
+      summarise(Cots = sum(ACA),
+                TransectSurface = sum(TransectSurface),
+                .groups = "drop")
     
+    # Threshold conversion of 100cots/10 000 sqm
+    cots$Threshold <- (cots$TransectSurface*100)/10000
     
+    # State
+    cots <- cots %>% 
+      mutate(
+        States = case_when(
+          Cots < Threshold ~ "No Outbreak",
+          Cots >= Threshold ~ "Outbreak"
+        
+      ))
+    
+    # WRITE STATES !
+    dir.create(file.path(pathDat, "01_Processed","Environment","COTS"), showWarnings = FALSE)
+    write.csv(cots, file.path(pathDat, "01_Processed","Environment","COTS","Env_COTS_Outbreaks_Station_States_New_Caledonia.csv"), row.names = FALSE)
     
     
 
