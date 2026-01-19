@@ -599,7 +599,8 @@ source("Scripts/00_Initialisation.R")
     
     chl_site_year_states <- chl_site_year[chl_site_year$year >2012,]
     
-    write.csv(chl_site_year_states, file = file.path(pathPro,"RORC_Env_ChlorophyllaRegime_Site_States_hdbn.csv"), row.names = FALSE)
+    dir.create(file.path(pathDat, "01_Processed","Environment","Chlorophyll_a"), showWarnings = FALSE)
+    write.csv(chl_site_year_states, file = file.path(pathDat, "01_Processed","Environment","Chlorophyll_a","RORC_Env_ChlorophyllaRegime_Site_States_hdbn.csv"), row.names = FALSE)
     
     # eo chlorophyll a ----
     
@@ -617,14 +618,14 @@ source("Scripts/00_Initialisation.R")
     pathHeat <- file.path(pathEnv, "Heatwaves_BAA")
     
     # Getting file name
-    baaFileName <- file.path(pathHeat,"noaacrwbaa7dDaily_2019.nc")
+    # baaFileName <- file.path(pathHeat,"noaacrwbaa7dDaily_2019.nc")
 
     # Terra brick to access data
-    baaR <- rast(baaFileName, subds = "bleaching_alert_area")
+    # baaR <- rast(baaFileName, subds = "bleaching_alert_area")
     # baaR[[1]]
-    plot(baaR[[1:12]])
-    plot(baaR[[181:192]])
-    plot(baaR[[90]])
+    # plot(baaR[[1:12]])
+    # plot(baaR[[181:192]])
+    # plot(baaR[[90]])
     
     # On linux there are problems of raster orientation but on windows there isn't
     # fix_orientation <- function(r) {
@@ -876,7 +877,7 @@ source("Scripts/00_Initialisation.R")
       )
     
     # Since it was an intersection, some years or stations may have been put aside so we build the grid back
-    # all_years <- sort(unique(storm_polygons$SEASON))
+    all_years <- sort(unique(storm_polygons$SEASON))
     
     cyclone_R34_counts <- expand.grid(
       # Site    = unique(stationsRorc$Site),

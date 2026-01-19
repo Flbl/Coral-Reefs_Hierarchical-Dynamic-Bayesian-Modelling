@@ -47,8 +47,8 @@
 
   # Coral
   coralRorc <- read.csv(file.path("Data", "Species","RORC_Coral_Data_hdbn.csv"))
-  coralRorc$Station <- gsub(" ","_", coralRorc$Station)
-  coralRorc$Site <- gsub(" ","_", coralRorc$Site)
+  # coralRorc$Station <- gsub(" ","_", coralRorc$Station)
+  # coralRorc$Site <- gsub(" ","_", coralRorc$Site)
   
   # Fish
   fishRorc <- read.csv(file.path("Data", "Species","RORC_Fish_Data_hdbn.csv"))
