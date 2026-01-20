@@ -197,8 +197,8 @@ source("Scripts/00_Initialisation.R")
   
   ninoa
   
-  dir.create(file.path(pathDat, "01_Processed","Environment","OceaniNinoIndex"), showWarnings = FALSE)
-  write.csv(ninoa, file.path(pathDat, "01_Processed","Environment","OceaniNinoIndex","Env_General_ONI_New_Caledonia.csv"), row.names = FALSE)
+  dir.create(file.path(pathDat, "01_Processed","Environment","OceanicNinoIndex"), showWarnings = FALSE)
+  write.csv(ninoa, file.path(pathDat, "01_Processed","Environment","OceanicNinoIndex","Env_General_ONI_New_Caledonia.csv"), row.names = FALSE)
   
 
   # TEMPERATURE ----
@@ -713,7 +713,7 @@ source("Scripts/00_Initialisation.R")
         )
       )
     
-    dir.create(file.path(pathDat, "01_Processed","Environment","Heawaves_BAA"), showWarnings = FALSE)
+    dir.create(file.path(pathDat, "01_Processed","Environment","Heatwaves_BAA"), showWarnings = FALSE)
     write.csv(baa_station_year, file.path(pathDat, "01_Processed","Environment","Heawaves_BAA","Env_HeatwavesBAA_Station_States_New_Caledonia.csv"), row.names = FALSE)
     
     
@@ -770,7 +770,7 @@ source("Scripts/00_Initialisation.R")
       State = case_when(
         CYCLONE %in% c(0) ~ "No Storm",
         CYCLONE %in% c(1:4) ~ "Moderate Storm Season",
-        CYCLONE %in% c(5:7) ~ "Intense Storm Season",
+        CYCLONE >= 5 ~ "Intense Storm Season",
         TRUE ~ NA_character_
         )
       )
