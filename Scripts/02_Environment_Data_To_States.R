@@ -628,13 +628,13 @@ source("Scripts/00_Initialisation.R")
     # plot(baaR[[90]])
     
     # On linux there are problems of raster orientation but on windows there isn't
-    # fix_orientation <- function(r) {
-    #   y <- terra::yFromRow(r)
-    #   if (y[1] > y[length(y)]) {
-    #     r <- terra::flip(r, "vertical")
-    #   }
-    #   r
-    # }
+    fix_orientation <- function(r) {
+      y <- terra::yFromRow(r)
+      if (y[1] > y[length(y)]) {
+        r <- terra::flip(r, "vertical")
+      }
+      r
+    }
     # plot(baaR[[1]])
     # plot(fix_orientation(baaR[[1]]))
 
@@ -643,12 +643,15 @@ source("Scripts/00_Initialisation.R")
     yea <- 2013:2024
 
     # Storing yearly data into a list 
-    annualDailyBaaBrick <- lapply(yea, function(x) rast(file.path(pathHeat, paste0("noaacrwbaa7dDaily_", x, ".nc")), subds = "bleaching_alert_area"))
+    annualDailyBaaBrick <- lapply(yea, function(x) fix_orientation(rast(file.path(pathHeat, paste0("noaacrwbaa7dDaily_", x, ".nc")), subds = "bleaching_alert_area")))
+    # annualDailyBaaBrick <- lapply(yea, function(x) rast(file.path(pathHeat, paste0("noaacrwbaa7dDaily_", x, ".nc")), subds = "bleaching_alert_area"))
     names(annualDailyBaaBrick) <- yea
+    # plot(annualDailyBaaBrick[[12]][[1]])
+    
     
     # Extracting station max baa value for each year
     # Function
-    extract_baa_year <- function(year, annualdaily_list, stations_sf, radius = 12000) {
+    extract_baa_year <- function(year, annualdaily_list, stations_sf, radius = 18000) {
       # Test zone
       # year = "2013"
       # annualdaily_list = annualDailyBaaBrick
@@ -659,8 +662,12 @@ source("Scripts/00_Initialisation.R")
       
       r <- annualdaily_list[[as.character(year)]]
       
+      # Change land value of 251 to NA
+      r[r == 251] <- NA
+      
       # extract each monthly layer separately (required for search_radius)
       vals_list <- lapply(1:nlyr(r), function(i) {
+        # i = 1
         terra::extract(
           r[[i]],
           vect(stations_sf),
@@ -714,7 +721,7 @@ source("Scripts/00_Initialisation.R")
       )
     
     dir.create(file.path(pathDat, "01_Processed","Environment","Heatwaves_BAA"), showWarnings = FALSE)
-    write.csv(baa_station_year, file.path(pathDat, "01_Processed","Environment","Heawaves_BAA","Env_HeatwavesBAA_Station_States_New_Caledonia.csv"), row.names = FALSE)
+    write.csv(baa_station_year, file.path(pathDat, "01_Processed","Environment","Heatwaves_BAA","Env_HeatwavesBAA_Station_States_New_Caledonia.csv"), row.names = FALSE)
     
     
     # eobaaR# eo heatwaves ----
