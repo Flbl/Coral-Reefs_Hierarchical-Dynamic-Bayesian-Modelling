@@ -304,7 +304,7 @@
   createTemplateHierarchicalNodes(dataset = fishRorc, 
                                   net = net, 
                                   structure = c("Site","Station"),
-                                  vars = c("RorcFishRichness","RorcCarnivoreAbund","RorcCorallivoreAbund","RorcHerbivoreAbund"))
+                                  vars = c("RorcFishRichness","RorcCarnivoreAbund","RorcCorallivoreAbund","RorcHerbivoreAbund","RorcScraperAbund"))
   
   length(net$getAllNodeIds())
   
@@ -412,7 +412,7 @@
   }
   
   # Fish_Scraper_Biomass
-  for(node in rankNodes[grep("RorcCorallivoreAbund", rankNodes)]) {
+  for(node in rankNodes[grep("RorcScraperAbund", rankNodes)]) {
     net$addArc("Fish_Scraper_Biomass", node)
   }
   
@@ -766,7 +766,7 @@
   nodes[grep("Local",nodes)]
   nodes[grep("Grav",nodes)]
   getArchetypeSpec(net, "Env_Site_bourail_Conditions")
-  getArchetypeSpec(net, "Env_Local_Pressure_Station_port_boise")
+  # getArchetypeSpec(net, "Env_Local_Pressure_Station_port_boise")
   getArchetypeSpec(net, "Env_Local_Pressure_Station_yejele")
   getArchetypeSpec(net, "Env_Gravity_Station_yejele")
   getArchetypeSpec(net, "Env_Local_Pressure_Station_hiengabat")
@@ -813,17 +813,24 @@
     site_cond_nodes <- grep("^Env_Site_.*_Conditions$", nodes, value = TRUE)
     
     for (cond_node in site_cond_nodes) {
+      # cond_node = "Env_Site_bourail_Conditions"
+      
+      message(cond_node)
       
       # Extract site name
       site <- sub("^Env_Site_(.*)_Conditions$", "\\1", cond_node)
       
       for (v in eco_vars) {
+        # v = "RorcHCO"
+        
+        message(v)
         
         target <- paste0(v, "_Site_", site)
         
-        if (target %in% nodes) {
-          net$addArc(cond_node, target)
-        }
+        # getArchetypeSpec(net, cond_node)
+        # ensureArc
+        # target %in% net$getChildIds(cond_node)
+        ensureArc(net, cond_node, target)
       }
     }
     
@@ -833,22 +840,110 @@
     station_press_nodes <- grep("^Env_Local_Pressure_Station_", nodes, value = TRUE)
     
     for (press_node in station_press_nodes) {
+      # press_node = "Env_Local_Pressure_Station_akaia"
+      
+      message(press_node)
       
       # Extract station name
       station <- sub("^Env_Local_Pressure_Station_", "", press_node)
       
       for (v in eco_vars) {
         
+        message(v)
+        
         target <- paste0(v, "_Station_", station)
         
-        if (target %in% nodes) {
-          net$addArc(press_node, target)
-        }
+        ensureArc(net, press_node, target)
       }
     }
   }
   
+  # getArchetypeSpec(net, "Env_Local_Pressure_Station_paradis")
+  getArchetypeSpec(net, "RorcScraperAbund_Site_bourail")
+  # nodes[grep("RorcScraperAbund",nodes)]
+  # nodes[grep("Scraper",nodes)]
+  
   linkCompositeDrivers(net, eco_vars)
+  
+  
+  # CHECKING TIME
+  # Helper Functions to check the model
+  # No parents (only specific env nodes should have no parents)
+  getNodesWithoutParents <- function(net) {
+    nodes <- net$getAllNodeIds()
+    nodes[sapply(nodes, function(n) length(net$getParentIds(n)) == 0)]
+  }
+  roots <- getNodesWithoutParents(net)
+  length(roots)
+  
+  # No children
+  getNodesWithoutChildren <- function(net) {
+    nodes <- net$getAllNodeIds()
+    nodes[sapply(nodes, function(n) length(net$getChildren(n)) == 0)]
+  }
+  test <- getNodesWithoutChildren(net)
+  test[grep("OBS|Trend",test, invert = TRUE)]
+  
+  # Nodes without parents or children?
+  getIsolatedNodes <- function(net) {
+    nodes <- net$getAllNodeIds()
+    nodes[
+      sapply(nodes, function(n)
+        length(net$getParentIds(n)) == 0 &&
+          length(net$getChildren(n)) == 0
+      )
+    ]
+  }
+  getIsolatedNodes(net)
+  
+  
+  # Nodes with only temporal parents or children
+  getTemporalOnlyNodes <- function(net) {
+    nodes <- net$getAllNodeIds()
+    
+    nodes[sapply(nodes, function(n) {
+      parents <- net$getParentIds(n)
+      children <- net$getChildren(n)
+      
+      has_structural <-
+        length(parents) > 0 || length(children) > 0
+      
+      has_temporal <-
+        net$getMaxNodeTemporalOrder(n) != 0
+      
+      has_temporal && !has_structural
+    })]
+  }
+  getTemporalOnlyNodes(net)
+  
+  
+  getNodesWithEmptyCPT <- function(net) {
+    nodes <- net$getAllNodeIds()
+    
+    nodes[sapply(nodes, function(n) {
+      cpt <- try(net$getNodeDefinition(n), silent = TRUE)
+      inherits(cpt, "try-error") || length(cpt) == 0
+    })]
+  }
+  getNodesWithEmptyCPT(net)
+  
+  
+  # Outcome consistency
+  checkOutcomeConsistency <- function(net, pattern) {
+    nodes <- grep(pattern, net$getAllNodeIds(), value = TRUE)
+    
+    if (length(nodes) < 2) return(invisible(NULL))
+    
+    ref <- net$getOutcomeIds(nodes[1])
+    
+    bad <- nodes[sapply(nodes, function(n) {
+      !identical(net$getOutcomeIds(n), ref)
+    })]
+    
+    bad
+  }
+  checkOutcomeConsistency(net, "Env_Temperature_Site_")
+  checkOutcomeConsistency(net, "Env_Chlorophylle_a_Site_")
   
   
   
@@ -859,10 +954,10 @@
   
   
   # Export the CPTs
-  net$getNodeDefinition("RorcInvAbund_Station_menaku")
-  net$getParentIds("RorcInvAbund_Station_menaku_Sample_2")
-  net$getNodeDefinition("RorcInvAbund_Station_menaku")
-  net$getOutcomeIds("RorcInvAbund_Station_menaku")
+  net$getNodeDefinition("RorcInvAbund_Station_akaia")
+  net$getParentIds("RorcInvAbund_Station_akaia")
+  net$getNodeDefinition("RorcInvAbund_Station_akaia")
+  net$getOutcomeIds("RorcInvAbund_Station_akaia")
   
   
   # Extract structure
