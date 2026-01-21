@@ -103,7 +103,7 @@
   
   # Create the nodes
   # Function to create CPT node :
-  createTemplateCptNode <- function(net, id, name, outcomes, xPos = NULL, yPos = NULL, temporal = FALSE) {
+  createTemplateCptNode <- function(net, id, name, outcomes, xPos = NULL, yPos = NULL, temporal = 0) {
     # Create blank node
     handle <- net$addNode(net$NodeType$CPT, id)
     
@@ -126,15 +126,15 @@
       }
     }
     
-    if(temporal == TRUE) {
+    # if(temporal == TRUE) {
       # Temporal node types are placed in a temporal plate
       # there are 4 states: 
-      # 1: CONTEMPORAL => not temporal
-      # 2: ANCHOR => Outside the temporal plate with children inside the first time slice of the temporal plate
+      # 0: CONTEMPORAL => not temporal
+      # 1: ANCHOR => Outside the temporal plate with children inside the first time slice of the temporal plate
+      # 2: TERMINAL => nodes outside the temporal plate with parents inside the plate, run on the last time slice only
       # 3: PLATE => "The" temporal type: nodes inside the temporal plate with incoming/outgoing temporal arcs
-      # 4: TERMINAL => nodes outside the temporal plate with parents inside the plate, run on the last time slice only
-     net$setNodeTemporalType(handle, 3)
-    }
+      net$setNodeTemporalType(handle, temporal)
+    # }
    
     
     return(handle)
@@ -209,7 +209,7 @@
           if (!(node %in% nodeList)) {
             cat("node : ", node,"\n")
             # Create the node
-            createTemplateCptNode(net, gsub("-","_", node), node, c("Very_Good","Good","Medium","Low","Zero"), temporal = TRUE)
+            createTemplateCptNode(net, gsub("-","_", node), node, c("Very_Good","Good","Medium","Low","Zero"), temporal = 3)
             # Add to node list
             nodeList <- c(nodeList, node)
           }
@@ -222,9 +222,9 @@
             cat("node : ", node,"\n")
             # Create the node
             if(length(grep("Trend",node)) == 0){
-              createTemplateCptNode(net, gsub("-","_", node), node, c("Very_Good","Good","Medium","Low","Zero"), temporal = TRUE)
+              createTemplateCptNode(net, gsub("-","_", node), node, c("Very_Good","Good","Medium","Low","Zero"), temporal = 3)
             } else {
-              createTemplateCptNode(net, gsub("-","_", node), node, c("Recovering","Stable","Degrading"), temporal = TRUE)
+              createTemplateCptNode(net, gsub("-","_", node), node, c("Recovering","Stable","Degrading"), temporal = 3)
             }
             # Add to node list
             nodeList <- c(nodeList, node)
@@ -434,21 +434,34 @@
   # General wise
   # Cyclone frequency over New Caledonia
   cyc <- read.csv(file.path(pathDat,"01_Processed","Environment","Cyclones","Env_StormCount_General_States_New_Caledonia.csv"), header = TRUE)
+  
   # Nino phase:
   ninoa <- read.csv(file.path(pathDat,"01_Processed","Environment","OceanicNinoIndex","Env_General_ONI_New_Caledonia.csv"), header = TRUE)
   
+  
   # Site wise
+  # Temperature regime
   temp <- read.csv(file.path(pathDat,"01_Processed","Environment","Temperature","RORC_Env_TemperatureRegime_Site_States_hdbn.csv"),header = TRUE)
+  
+  # Chla regime
   chla <- read.csv(file.path(pathDat,"01_Processed","Environment","Chlorophyll_a","RORC_Env_ChlorophyllaRegime_Site_States_hdbn.csv"),header = TRUE)
   
+  
   # Station wise
+  # Cyclone R34 influence
   cycR34 <- read.csv(file.path(pathDat,"01_Processed","Environment","Cyclones","Env_R34StormCount_Station_States_New_Caledonia.csv"), header = TRUE)
+  
+  # Bleaching alert area
   baa <- read.csv(file.path(pathDat,"01_Processed","Environment","Heatwaves_BAA","Env_HeatwavesBAA_Station_States_New_Caledonia.csv"), header = TRUE)
+  
+  # Cots
   cots <- read.csv(file.path(pathDat,"01_Processed","Environment","COTS","Env_COTS_Outbreaks_Station_States_New_Caledonia.csv"), header = TRUE)
+  
+  # Gravity
   grav <- read.csv(file.path(pathDat,"01_Processed","Environment","Gravity","Env_Gravity_Station_States_New_Caledonia.csv"), header = TRUE)
   
   
-  
+  # Replicating env archetype nodes per spatial unit (General/Station/Site/) per variable
   nodes[grep("Env",nodes)]
   net$getParentIds("Env_Local_Pressure_Station_XX")
   
@@ -457,23 +470,387 @@
     list(
       outcomes = net$getOutcomeIds(archetype),
       parents  = net$getParentIds(archetype),
+      children = net$getChildIds(archetype),
       temporal = net$getNodeTemporalType(archetype)
     )
   }
   
   getArchetypeSpec(net, "Env_Temperature_Site_XX")
+  getArchetypeSpec(net, "Env_Bleaching_Alert_Area_Station_XX")
+  getArchetypeSpec(net, "Env_Gravity_Station_XX")
+  getArchetypeSpec(net, "Env_Local_Pressure_Station_XX")
+  getArchetypeSpec(net, "Env_General_Nino_Phase")
   
-  replicateEnvNode <- function(net, archetype, newId) {
-    spec <- archetypeSpec[[archetype]]
-    
-    createTemplateCptNode(
-      net,
-      id = newId,
-      name = newId,
-      outcomes = spec$outcomes,
-      temporal = (spec$temporal == 3)
-    )
+  
+  # Helper functions
+  makeSpatialNode <- function(template, station) {
+    gsub("XX", station, template)
   }
+  
+  ensureNode <- function(net, node_id, archetype) {
+    if (!(node_id %in% net$getAllNodeIds())) {
+      info <- getArchetypeSpec(net, archetype)
+      createTemplateCptNode(
+        net,
+        id = node_id,
+        name = node_id,
+        outcomes = info$outcomes,
+        temporal = info$temporal
+      )
+    }
+  }
+  
+  ensureArc <- function(net, parent, child) {
+    if (!(child %in% net$getChildIds(parent))) {
+      net$addArc(parent, child)
+    }
+  }
+  
+  # Function to create environmental nodes from model template archetypes and csv data
+  # No direct observed csv connect to station/site nodes. So we don't need to wire the arcs to all stations/sites in this function
+  createEnvNodesFromCSV <- function(net,
+                                    csv,
+                                    archetype,
+                                    spatial_level = c("Station", "Site"), # , "General" # We remove General as we can already wire the nodes in Genie
+                                    # state_col = "State",
+                                    station_col = "Station",
+                                    site_col = "Site") {
+    
+    # Test zone
+    # net = net
+    # csv = baa
+    # archetype = "Env_Bleaching_Alert_Area_Station_XX"
+    # spatial_level = c("Station")
+    # state_col = "State"
+    # station_col = "station"
+    # site_col = "site"
+    
+    # net = net
+    # csv = temp
+    # archetype = "Env_Temperature_Site_XX"
+    # spatial_level = c("Site")
+    # state_col = "SST_regime_state"
+    # station_col = ""
+    # site_col = "site"
+    
+    # net = net
+    # csv = cycR34
+    # archetype = "Env_Cyclone_R34_Station_XX"
+    # spatial_level = c("Station")
+    # state_col = "States"
+    # station_col = "Station"
+    # site_col = ""
+    
+    # net = net
+    # csv = cots
+    # archetype = "Env_COTS_Outbreak_Station_XX"
+    # spatial_level = c("Station")
+    # state_col = "States"
+    # station_col = "Station"
+    # site_col = ""
+
+    # eo tz
+    
+    
+    # Ensure spatial_level is one of the allowed values
+    # This avoids silent errors and standardises downstream logic
+    # This runs only when inside the function
+    spatial_level <- match.arg(spatial_level)
+    
+    # # Raise errors for site/station names
+    # if (spatial_level == "Site" && !site_col %in% names(csv)) {
+    #   stop(sprintf("site_col '%s' not found in CSV", site_col))
+    # }
+    # 
+    # if (spatial_level == "Station" && !station_col %in% names(csv)) {
+    #   stop(sprintf("station_col '%s' not found in CSV", station_col))
+    # }
+    
+    
+    # Retrieve structural metadata from the archetype environmental node:
+    # - its outcomes (not used here directly)
+    # - its parents and children (critical for reconnecting structure)
+    # - its temporal type (PLATE / ANCHOR / etc.)
+    info <- getArchetypeSpec(net, archetype)
+    
+    # Determine which spatial units the node must be replicated over.
+    # This is inferred directly from the CSV content.
+    # Station-level drivers → one node per Station
+    # Site-level drivers    → one node per Site
+    # General drivers       → a single node (no spatial replication)
+    units <- switch(
+      spatial_level,
+      Station = unique(csv[[station_col]]),
+      Site    = unique(csv[[site_col]])
+      # General = "General"
+    )
+    
+    # Extract the categorical states of the environmental variable.
+    # These define the node outcomes (e.g. "No alert","Bleaching alert","Mortality alert" for baa).
+    # IMPORTANT:
+    # - We only define the outcome space here
+    # - CPT values will be learned / set later
+    # states <- unique(as.character(csv[[state_col]]))
+    
+    # Cache all existing node IDs in the network.
+    # This avoids repeated expensive calls to net$getAllNodeIds()
+    nodeList <- net$getAllNodeIds()
+    
+    # Iterate over each spatial replication unit
+    for (u in units) {
+      # u = "akaia"
+      # u = "chateaubriand"
+      
+      
+      # Construct the new node ID by replacing the "XX" placeholder
+      # used in Genie archetypes with the actual spatial unit.
+      new_id <- makeSpatialNode(archetype, u)
+      
+      # Create the replicated environmental node
+      if (!(new_id %in% nodeList)) {
+        createTemplateCptNode(
+          net,
+          id       = new_id,
+          name     = new_id,
+          outcomes = info$outcomes,
+          temporal = info$temporal
+        )
+        nodeList <- c(nodeList, new_id)
+      }
+ 
+      # Reconnect the archetype children (if any)
+      for (child in info$children) {
+        # child = info$children[1]
+        
+        # If there is another archetype node in the children we create its name
+        child_id <- if (grepl("XX", child)) {
+          makeSpatialNode(child, u)
+        } else {
+          child
+        }
+        
+        # Ensure child exists
+        if (!(child_id %in% nodeList)) {
+          child_info <- getArchetypeSpec(net, child)
+          createTemplateCptNode(
+            net,
+            id       = child_id,
+            name     = child_id,
+            outcomes = child_info$outcomes,
+            temporal = child_info$temporal
+          )
+          nodeList <- c(nodeList, child_id)
+        }
+        
+        # Add structural arc
+        ensureArc(net, new_id, child_id)
+        
+        # Add temporal arc for cyclone forcing
+        if (grepl("Env_Cyclone_R34", new_id)) {
+          net$addTemporalArc(new_id, child_id, 1)
+        }
+      }
+      
+      
+      # Station level local pressure node logic (specific)
+      if (spatial_level == "Station") {
+        
+        env_pressure_id <- makeSpatialNode(
+          "Env_Environmental_Pressure_Station_XX", u
+        )
+        
+        local_pressure_id <- makeSpatialNode(
+          "Env_Local_Pressure_Station_XX", u
+        )
+        
+        # Ensure both nodes exist
+        ensureNode(net,
+                   env_pressure_id,
+                   "Env_Environmental_Pressure_Station_XX")
+        
+        ensureNode(net,
+                   local_pressure_id,
+                   "Env_Local_Pressure_Station_XX")
+        
+        # Ensure arc exists
+        ensureArc(net, env_pressure_id, local_pressure_id)
+      }
+    }
+  }
+  
+  
+  # Create environmental nodes from csv
+  # Initial node number check
+  length(net$getAllNodeIds())
+  
+  # Temperature regime
+  createEnvNodesFromCSV(
+    net        = net,
+    csv        = temp,
+    archetype  = "Env_Temperature_Site_XX", # nodes[grep("Temperature",nodes)]
+    spatial_level = "Site",
+    site_col = "site"
+  )
+  
+  # Checks
+  # nodes <- net$getAllNodeIds()
+  length(net$getAllNodeIds())
+  # nodes[grep("Temperature",nodes)]
+  # nodes[grep("Conditio",nodes)]
+  
+  # Chla regime
+  createEnvNodesFromCSV(
+    net        = net,
+    csv        = chla,
+    archetype  = nodes[grep("Chloro",nodes)],
+    spatial_level = "Site",
+    site_col = "site"
+  )
+  
+  # Checks
+  # nodes <- net$getAllNodeIds()
+  length(net$getAllNodeIds())
+  # nodes[grep("Chloro",nodes)]
+  # nodes[grep("Conditio",nodes)]
+  # getArchetypeSpec(net, "Env_Site_bourail_Conditions")
+  
+  # Gravity
+  createEnvNodesFromCSV(
+    net        = net,
+    csv        = grav,
+    archetype  = nodes[grep("Grav",nodes)],
+    spatial_level = "Station",
+    station_col = "Station"
+  )
+  length(net$getAllNodeIds())
+  
+  
+  # COTS oubreaks
+  createEnvNodesFromCSV(
+    net        = net,
+    csv        = cots,
+    archetype  = nodes[grep("COTS",nodes)],
+    spatial_level = "Station",
+    station_col = "Station"
+  )
+  length(net$getAllNodeIds())
+  
+  # BAA
+  createEnvNodesFromCSV(
+    net        = net,
+    csv        = baa,
+    archetype  = nodes[grep("Bleaching",nodes)],
+    spatial_level = "Station",
+    station_col = "station"
+  )
+  length(net$getAllNodeIds())
+  
+  # Cyclone R34
+  createEnvNodesFromCSV(
+    net        = net,
+    csv        = cycR34,
+    archetype  = "Env_Cyclone_R34_Station_XX",
+    spatial_level = "Station",
+    station_col = "Station"
+  )
+  length(net$getAllNodeIds())
+  
+  
+  # Checks
+  nodes <- net$getAllNodeIds()
+  nodes[grep("Temp",nodes)]
+  nodes[grep("Chloro",nodes)]
+  nodes[grep("COTS",nodes)]
+  nodes[grep("Env",nodes)]
+  nodes[grep("Conditio",nodes)]
+  nodes[grep("Local",nodes)]
+  nodes[grep("Grav",nodes)]
+  getArchetypeSpec(net, "Env_Site_bourail_Conditions")
+  getArchetypeSpec(net, "Env_Local_Pressure_Station_port_boise")
+  getArchetypeSpec(net, "Env_Local_Pressure_Station_yejele")
+  getArchetypeSpec(net, "Env_Gravity_Station_yejele")
+  getArchetypeSpec(net, "Env_Local_Pressure_Station_hiengabat")
+  getArchetypeSpec(net, "Env_Gravity_Station_hiengabat")
+  
+  # Delete all archetypal nodes
+  todel <- nodes[grep("XX",nodes)]
+  lapply(todel, net$deleteNode)
+  
+  getCPT(net,"Env_Environmental_Pressure_Station_akaia")
+  getCPT(net,"Env_Local_Pressure_Station_akaia")
+  
+  # Get list of environmental nodes connecting to the site/station-variable
+  eco_vars <- c(
+    "RorcCoralRichness",
+    "RorcHCB",
+    "RorcHCM",
+    "RorcHCT",
+    "RorcHCO",
+    "RorcSC",
+    "RorcRC",
+    "RorcRB",
+    "RorcSD_SI",
+    "RorcFishRichness",
+    "RorcHerbivoreAbund",
+    "RorcCorallivoreAbund",
+    "RorcCarnivoreAbund",
+    "RorcScraperAbund",
+    "RorcInvRichness",
+    "RorcInvAbund"
+  )
+  
+  
+  # Loop over the env nodes to create an arc to each site/station wise variables
+  # Create a function to link all of this:
+  
+  linkCompositeDrivers <- function(net, eco_vars) {
+    
+    nodes <- net$getAllNodeIds()
+    
+    ## ------------------------------------------------
+    ## 1. SITE-LEVEL: Env_Site_<site>_Conditions
+    ## ------------------------------------------------
+    site_cond_nodes <- grep("^Env_Site_.*_Conditions$", nodes, value = TRUE)
+    
+    for (cond_node in site_cond_nodes) {
+      
+      # Extract site name
+      site <- sub("^Env_Site_(.*)_Conditions$", "\\1", cond_node)
+      
+      for (v in eco_vars) {
+        
+        target <- paste0(v, "_Site_", site)
+        
+        if (target %in% nodes) {
+          net$addArc(cond_node, target)
+        }
+      }
+    }
+    
+    ## ------------------------------------------------
+    ## 2. STATION-LEVEL: Env_Local_Pressure_Station_<station>
+    ## ------------------------------------------------
+    station_press_nodes <- grep("^Env_Local_Pressure_Station_", nodes, value = TRUE)
+    
+    for (press_node in station_press_nodes) {
+      
+      # Extract station name
+      station <- sub("^Env_Local_Pressure_Station_", "", press_node)
+      
+      for (v in eco_vars) {
+        
+        target <- paste0(v, "_Station_", station)
+        
+        if (target %in% nodes) {
+          net$addArc(press_node, target)
+        }
+      }
+    }
+  }
+  
+  linkCompositeDrivers(net, eco_vars)
+  
+  
   
   # EXPORT THE MODEL
   net$writeFile(file.path("Results", "Rorc_HDBN_Template.xdsl"))
@@ -507,6 +884,211 @@
   
 # Trash
   
+  # Old function working (remove all child2 stuff)
+  # createEnvNodesFromCSV <- function(net,
+  #                                   csv,
+  #                                   archetype,
+  #                                   spatial_level = c("Station", "Site"), # , "General" # We remove General as we can already wire the nodes in Genie
+  #                                   # state_col = "State",
+  #                                   station_col = "Station",
+  #                                   site_col = "Site") {
+  #   
+  #   # Test zone
+  #   # net = net
+  #   # csv = baa
+  #   # archetype = "Env_Bleaching_Alert_Area_Station_XX"
+  #   # spatial_level = c("Station")
+  #   # state_col = "State"
+  #   # station_col = "station"
+  #   # site_col = "site"
+  #   
+  #   # net = net
+  #   # csv = temp
+  #   # archetype = "Env_Temperature_Site_XX"
+  #   # spatial_level = c("Site")
+  #   # state_col = "SST_regime_state"
+  #   # station_col = ""
+  #   # site_col = "site"
+  #   
+  #   # net = net
+  #   # csv = cycR34
+  #   # archetype = "Env_Cyclone_R34_Station_XX"
+  #   # spatial_level = c("Station")
+  #   # state_col = "States"
+  #   # station_col = "Station"
+  #   # site_col = ""
+  #   
+  #   # eo tz
+  #   
+  #   
+  #   # Ensure spatial_level is one of the allowed values
+  #   # This avoids silent errors and standardises downstream logic
+  #   # This runs only when inside the function
+  #   spatial_level <- match.arg(spatial_level)
+  #   
+  #   # # Raise errors for site/station names
+  #   # if (spatial_level == "Site" && !site_col %in% names(csv)) {
+  #   #   stop(sprintf("site_col '%s' not found in CSV", site_col))
+  #   # }
+  #   # 
+  #   # if (spatial_level == "Station" && !station_col %in% names(csv)) {
+  #   #   stop(sprintf("station_col '%s' not found in CSV", station_col))
+  #   # }
+  #   
+  #   
+  #   # Retrieve structural metadata from the archetype environmental node:
+  #   # - its outcomes (not used here directly)
+  #   # - its parents and children (critical for reconnecting structure)
+  #   # - its temporal type (PLATE / ANCHOR / etc.)
+  #   info <- getArchetypeSpec(net, archetype)
+  #   
+  #   # Determine which spatial units the node must be replicated over.
+  #   # This is inferred directly from the CSV content.
+  #   # Station-level drivers → one node per Station
+  #   # Site-level drivers    → one node per Site
+  #   # General drivers       → a single node (no spatial replication)
+  #   units <- switch(
+  #     spatial_level,
+  #     Station = unique(csv[[station_col]]),
+  #     Site    = unique(csv[[site_col]])
+  #     # General = "General"
+  #   )
+  #   
+  #   # Extract the categorical states of the environmental variable.
+  #   # These define the node outcomes (e.g. "No alert","Bleaching alert","Mortality alert" for baa).
+  #   # IMPORTANT:
+  #   # - We only define the outcome space here
+  #   # - CPT values will be learned / set later
+  #   # states <- unique(as.character(csv[[state_col]]))
+  #   
+  #   # Cache all existing node IDs in the network.
+  #   # This avoids repeated expensive calls to net$getAllNodeIds()
+  #   nodeList <- net$getAllNodeIds()
+  #   
+  #   # Iterate over each spatial replication unit
+  #   for (u in units) {
+  #     # u = "akaia"
+  #     # u = "chateaubriand"
+  #     
+  #     
+  #     # Construct the new node ID by replacing the "XX" placeholder
+  #     # used in Genie archetypes with the actual spatial unit.
+  #     #
+  #     # Examples:
+  #     #   Env_Cyclone_R34_Station_XX → Env_Cyclone_R34_Station_jua
+  #     #   Env_Chlorophylle_a_Site_XX → Env_Chlorophylle_a_Site_bourail
+  #     #   Env_General_Cyclone_Season stays the same
+  #     new_id <- switch(
+  #       spatial_level,
+  #       Station = gsub("XX", u, archetype),
+  #       Site    = gsub("XX", u, archetype)
+  #       # General = gsub("_XX", "", archetype)
+  #     )
+  #     
+  #     
+  #     # If the node already exists (e.g. repeated CSV rows),
+  #     # skip creation to avoid SMILE errors
+  #     if (new_id %in% nodeList) next
+  #     
+  #     # Create a new CPT node using the generated ID
+  #     # The node is structurally identical to the archetype
+  #     handle <- createTemplateCptNode(net, 
+  #                                     id = new_id, 
+  #                                     name = new_id,
+  #                                     outcomes = info$outcomes,
+  #                                     temporal = info$temporal
+  #     )
+  #     
+  #     # Update the cached node list to include the newly created node
+  #     nodeList <- c(nodeList, new_id)
+  #     
+  #     # Reconnect the new node to the children of the archetype.
+  #     #
+  #     # This ensures that:
+  #     # - Station/Site-specific environmental drivers influence
+  #     #   the correct ecological or composite nodes
+  #     # - Existing causal logic in the core model is preserved
+  #     for (child in info$children) {
+  #       # child = info$children[1]
+  #       
+  #       # If the child node is also spatially templated (contains "XX"),
+  #       # Replicate it to create a new node (check if it exists as well)
+  #       # Change its name with the same spatial unit
+  #       child_id <- if (grepl("XX", child)) gsub("XX", u, child) else child
+  #       # Check if it exists already
+  #       # Add the arc but create the child it doesn't exist in the network.
+  #       if (child_id %in% nodeList) {
+  #         net$addArc(new_id, child_id)
+  #         
+  #         # Add temporal links
+  #         if(grepl("Env_Cyclone_R34", new_id)) net$addTemporalArc(new_id, child_id, 1)
+  #         
+  #       } else {
+  #         info_Child <- getArchetypeSpec(net, child)
+  #         
+  #         child_handle <- createTemplateCptNode(net, 
+  #                                               id = child_id, 
+  #                                               name = child_id,
+  #                                               outcomes = info_Child$outcomes,
+  #                                               temporal = info_Child$temporal
+  #         )
+  #         # Add the arc
+  #         net$addArc(new_id, child_id)
+  #         
+  #         # Add temporal links
+  #         if(grepl("Env_Cyclone_R34", new_id)) net$addTemporalArc(new_id, child_id, 1)
+  #         
+  #         # Update the cached node list to include the newly created node
+  #         nodeList <- c(nodeList, child_id)
+  #         
+  #         # IF the child is "Env_Local_Pressure_Station_XX", we need to add an arc to it from the children 
+  #         if(length(info_Child$children) > 0 && any(grepl("Env_Local_Pressure_Station_XX", info_Child$children))) {
+  #           child_id2 <- if (grepl("XX", info_Child$children)) gsub("XX", u, info_Child$children) else info_Child$children
+  #           
+  #           if (child_id2 %in% nodeList) {
+  #             
+  #             if(length(net$getChildren(child_id2)) == 0) net$addArc(child_id, child_id2)
+  #             
+  #           } else {
+  #             
+  #             # Create the node if it doesn't exist (it should exist depending on the order of nodes generation)
+  #             # First fetch info
+  #             info_Child2 <- getArchetypeSpec(net, info_Child$children)
+  #             
+  #             # Then create the node
+  #             child2_handle <- createTemplateCptNode(net, 
+  #                                                    id = child_id2, 
+  #                                                    name = child_id2,
+  #                                                    outcomes = info_Child2$outcomes,
+  #                                                    temporal = info_Child2$temporal
+  #             )
+  #             
+  #             # And add the arc
+  #             net$addArc(child_id, child_id2)
+  #             
+  #           }
+  #         }
+  #       }
+  #       
+  #       # Deal with the link env pressure -> local pressure
+  #       
+  #     }
+  #   }
+  # }
+  # 
+  
+  
+  # replicateEnvNode <- function(net, archetype, newId) {
+  #   spec <- archetypeSpec[[archetype]]
+  #   
+  #   createTemplateCptNode(
+  #     net,
+  #     id = newId,
+  #     name = newId,
+  #     outcomes = spec$outcomes,
+  #     temporal = (spec$temporal == 3)
+  #   )
+  # }
   # # REGION WISE
   # # Coral_Diversity
   # for(node in RegionNodes[grep("RorcCoralRichness", RegionNodes)]) {
