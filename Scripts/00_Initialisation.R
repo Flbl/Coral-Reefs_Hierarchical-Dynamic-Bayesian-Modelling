@@ -18,6 +18,7 @@ pathPro <- file.path("Data", "01_Processed")
 pathProSpe <- file.path("Data", "01_Processed", "Species")
 pathProEnv <- file.path("Data", "01_Processed", "Environment")
 pathProGra <- file.path("Data", "01_Processed", "Graph")
+pathProCpt <- file.path("Data", "01_Processed", "CPT")
 pathRes <- file.path("Results")
 
 # Create dirs
@@ -29,6 +30,7 @@ dir.create(pathPro, showWarnings = FALSE)
 dir.create(pathProSpe, showWarnings = FALSE)
 dir.create(pathProEnv, showWarnings = FALSE)
 dir.create(pathProGra, showWarnings = FALSE)
+dir.create(pathProCpt, showWarnings = FALSE)
 dir.create(pathRes, showWarnings = FALSE)
 
 
@@ -126,6 +128,7 @@ safe_Mclust <- function(x, ...) {
 
 # Function to get CPT in dataframe from a graph network from the rSMILE package
 getCPT <- function(net, node, temporal_order = c(1,2)) {
+  
   states <- net$getOutcomeIds(node)
   n_states <- length(states)
   
@@ -192,7 +195,7 @@ getCPT <- function(net, node, temporal_order = c(1,2)) {
     byrow = TRUE
   )
   
-  colnames(cpt_matrix) <- states
+  colnames(cpt_matrix) <- paste0("P_", states)
   
   cpt <- cbind(parent_grid, cpt_matrix)
   

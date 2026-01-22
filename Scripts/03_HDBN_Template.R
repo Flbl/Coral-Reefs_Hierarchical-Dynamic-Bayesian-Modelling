@@ -155,10 +155,10 @@
     # DEV PART
     # dataset <- coralRorc
     # structure = c("Site","Station")
+    # vars = c("RorcHCB", "RorcHCM", "RorcHCO", "RorcHCT", "RorcSC", "RorcDC", "RorcSD_SI", "RorcRB", "RorcCoralRichness","RorcCoralCover")
     # colExcept = c("Year","Country","Region","Sector","n_samples","RorcCoralCover", "RorcDC")
     # vars = colnames(dataset)[!colnames(dataset) %in% c(structure,colExcept)]
     # structure = c("Region","Sector","Site","Station","Sample")
-    # vars = c("RorcHCB", "RorcHCM", "RorcHCO", "RorcHCT", "RorcSC", "RorcDC", "RorcSD_SI", "RorcRB", "RorcCoralRichness","RorcCoralCover")
     # dataset <- invRorc
     # structure = c("Site","Station")
     # vars = c("RorcInvRichness","RorcInvAbund")
@@ -217,7 +217,7 @@
         
         # Create station / Station OBS / Station Trend (we lose sample)
         for (node in c(station)) {
-          # node = station
+          # node = "RorcHCB_Station_hnasse_Trend"
           if (!(node %in% nodeList)) {
             cat("node : ", node,"\n")
             # Create the node

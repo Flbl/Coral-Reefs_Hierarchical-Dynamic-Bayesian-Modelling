@@ -81,19 +81,19 @@ source("License.R")
   # Export CPTS to excel
   lapply(hierCpts, function(x){
     # x = hierCpts[[1]]
-    write.csv(x$cpt, file.path(pathProCpt,paste0("CPT_",x$node,".csv")))
+    write.csv(x$cpt, file.path(pathProCpt,paste0("CPT_",x$node,".csv")), row.names = FALSE)
     
   })
   
   lapply(coreCpts, function(x){
     # x = hierCpts[[1]]
-    write.csv(x$cpt, file.path(pathProCpt,paste0("CPT_",x$node,".csv")))
+    write.csv(x$cpt, file.path(pathProCpt,paste0("CPT_",x$node,".csv")), row.names = FALSE)
     
   })
   
   lapply(envCpts, function(x){
     # x = hierCpts[[1]]
-    write.csv(x$cpt, file.path(pathProCpt,paste0("CPT_",x$node,".csv")))
+    write.csv(x$cpt, file.path(pathProCpt,paste0("CPT_",x$node,".csv")), row.names = FALSE)
     
   })
   
