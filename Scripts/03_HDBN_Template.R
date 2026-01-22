@@ -94,11 +94,11 @@
   
   # RORC
   # Coral
-  coralRorc <- read.csv(file.path(pathPro,"RORC_Coral_Station_General_States_hdbn.csv"))
+  coralRorc <- read.csv(file.path(pathProSpe,"RORC_Coral_Station_General_States_hdbn.csv"))
   # Fish
-  fishRorc <- read.csv(file.path(pathPro,"RORC_Fish_Station_General_States_hdbn.csv"))
+  fishRorc <- read.csv(file.path(pathProSpe,"RORC_Fish_Station_General_States_hdbn.csv"))
   # Inv
-  invRorc <- read.csv(file.path(pathPro,"RORC_Inv_Station_General_States_hdbn.csv"))
+  invRorc <- read.csv(file.path(pathProSpe,"RORC_Inv_Station_General_States_hdbn.csv"))
   
   
   # Create the nodes
@@ -479,7 +479,7 @@
   getArchetypeSpec(net, "Env_Bleaching_Alert_Area_Station_XX")
   getArchetypeSpec(net, "Env_Gravity_Station_XX")
   getArchetypeSpec(net, "Env_Local_Pressure_Station_XX")
-  getArchetypeSpec(net, "Env_General_Nino_Phase")
+  getArchetypeSpec(net, "Env_Nino_Phase_General")
   
   
   # Helper functions
@@ -765,7 +765,7 @@
   nodes[grep("Conditio",nodes)]
   nodes[grep("Local",nodes)]
   nodes[grep("Grav",nodes)]
-  getArchetypeSpec(net, "Env_Site_bourail_Conditions")
+  getArchetypeSpec(net, "Env_Conditions_Site_bourail")
   # getArchetypeSpec(net, "Env_Local_Pressure_Station_port_boise")
   getArchetypeSpec(net, "Env_Local_Pressure_Station_yejele")
   getArchetypeSpec(net, "Env_Gravity_Station_yejele")
@@ -810,15 +810,17 @@
     ## ------------------------------------------------
     ## 1. SITE-LEVEL: Env_Site_<site>_Conditions
     ## ------------------------------------------------
-    site_cond_nodes <- grep("^Env_Site_.*_Conditions$", nodes, value = TRUE)
+    # site_cond_nodes <- grep("^Env_Site_.*_Conditions$", nodes, value = TRUE)
+    site_cond_nodes <- grep("^Env_Conditions_Site_.*", nodes, value = TRUE)
     
     for (cond_node in site_cond_nodes) {
-      # cond_node = "Env_Site_bourail_Conditions"
+      # cond_node = "Env_Conditions_Site_bourail"
       
       message(cond_node)
       
       # Extract site name
-      site <- sub("^Env_Site_(.*)_Conditions$", "\\1", cond_node)
+      # site <- sub("^Env_Site_(.*)_Conditions$", "\\1", cond_node)
+      site <- sub("^Env_Conditions_Site_", "", cond_node)
       
       for (v in eco_vars) {
         # v = "RorcHCO"
@@ -945,34 +947,10 @@
   checkOutcomeConsistency(net, "Env_Temperature_Site_")
   checkOutcomeConsistency(net, "Env_Chlorophylle_a_Site_")
   
-  
+  length(net$getAllNodeIds())
   
   # EXPORT THE MODEL
-  net$writeFile(file.path("Results", "Rorc_HDBN_Template.xdsl"))
-  
-  
-  
-  
-  # Export the CPTs
-  net$getNodeDefinition("RorcInvAbund_Station_akaia")
-  net$getParentIds("RorcInvAbund_Station_akaia")
-  net$getNodeDefinition("RorcInvAbund_Station_akaia")
-  net$getOutcomeIds("RorcInvAbund_Station_akaia")
-  
-  
-  # Extract structure
-  # Structure, variables
-  structure <- c("")
-  
-  
-  
-  
-  
-  
-  
-    
-# Load CPTs from excel file
-  
+  net$writeFile(file.path(pathDat,"01_Processed","Graph", "Rorc_HDBN_Template.xdsl"))
   
   
   

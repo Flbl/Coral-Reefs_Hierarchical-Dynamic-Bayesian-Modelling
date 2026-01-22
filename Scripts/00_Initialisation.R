@@ -11,16 +11,25 @@
 # Common paths
 
 pathDat <- file.path("Data")
-pathSpe <- file.path("Data", "Species")
-pathEnv <- file.path("Data", "Environment")
-pathPro <- file.path("Data", "Processed")
+pathSpe <- file.path("Data","00_Raw","Species")
+pathEnv <- file.path("Data","00_Raw", "Environment")
+pathGra <- file.path("Data","00_Raw", "Graph")
+pathPro <- file.path("Data", "01_Processed")
+pathProSpe <- file.path("Data", "01_Processed", "Species")
+pathProEnv <- file.path("Data", "01_Processed", "Environment")
+pathProGra <- file.path("Data", "01_Processed", "Graph")
 pathRes <- file.path("Results")
 
 # Create dirs
-dir.create("Data", showWarnings = FALSE)
-dir.create(file.path("Data","Processed"), showWarnings = FALSE)
-dir.create(file.path("Data","Environment"), showWarnings = FALSE)
-dir.create(file.path("Data","Species"), showWarnings = FALSE)
+dir.create(pathDat, showWarnings = FALSE)
+dir.create(pathSpe, showWarnings = FALSE)
+dir.create(pathEnv, showWarnings = FALSE)
+dir.create(pathGra, showWarnings = FALSE)
+dir.create(pathPro, showWarnings = FALSE)
+dir.create(pathProSpe, showWarnings = FALSE)
+dir.create(pathProEnv, showWarnings = FALSE)
+dir.create(pathProGra, showWarnings = FALSE)
+dir.create(pathRes, showWarnings = FALSE)
 
 
 # Load packages ----
@@ -44,7 +53,6 @@ if (!require("ggnewscale")) install.packages("ggnewscale")
 if(init1 == "01_Data_To_States.R") {
   
   
-  # Travel time
   # This package will install pretty much all other needed packages for SIG processing
   if (!require("brms")) install.packages("brms")
   if (!require("mclust")) install.packages("mclust")
@@ -62,8 +70,6 @@ if(init1 == "01_Data_To_States.R") {
 if(init1 == "02_Environment_Data_To_States.R") {
   
   
-  # Travel time
-  # This package will install pretty much all other needed packages for SIG processing
   if (!require("purrr")) install.packages("purrr")
   if (!require("lubridate")) install.packages("lubridate")
   if (!require("ncdf4")) install.packages("ncdf4")
@@ -78,21 +84,24 @@ if(init1 == "02_Environment_Data_To_States.R") {
 
 
 
-if(init1 == "03_HDBN_Template_CPT_Creation.R") {
+if(init1 == "03_HDBN_Template.R") {
   
   
   # Travel time
   # This package will install pretty much all other needed packages for SIG processing
-  if (!require("brms")) install.packages("brms")
-  if (!require("mclust")) install.packages("mclust")
   if (!require("purrr")) install.packages("purrr")
-  if (!require("lmPerm")) install.packages("lmPerm")
 
   
 }
 
 
+if(init1 == "04_Extract_CPT_Templates.R") {
+  
+  
+  if (!require("purrr")) install.packages("purrr")
 
+  
+}
 
 
 
@@ -122,43 +131,70 @@ getCPT <- function(net, node, temporal_order = c(1,2)) {
   
   # parents in the same time slice
   parents_now <- net$getParents(node)
-  names(parents_now) <- unlist(lapply(parents_now, net$getNodeId))
+  if (length(parents_now) > 0) {
+    names(parents_now) <- vapply(
+      parents_now,
+      net$getNodeId,
+      character(1)
+    )
+  }
   
-  # parents from previous slices (temporal)
-  parents_temp <- unlist(lapply(temporal_order, function(x) {
-    # x = 2
-    res <- net$getTemporalParents(node, x)
-    if(length(res) == 0) return(NULL)
-    resNode <- res[[1]]$handle
-    resId <- res[[1]]$id
-    resOrder <- res[[1]]$order
-    names(resNode) <- paste0(resId, "_t-",resOrder)
-    return(resNode)
+  # --- Temporal parents (previous slices) ---
+  parents_temp <- list()
+  
+  for (lag in temporal_order) {
     
-  }))
+    # rSMILE throws an error if the node is not temporal
+    res <- tryCatch(
+      net$getTemporalParents(node, lag),
+      error = function(e) NULL
+    )
+    
+    if (is.null(res) || length(res) == 0) next
+    
+    # rSMILE can return multiple temporal parents for the same lag
+    for (r in res) {
+      parent_handle <- r$handle
+      parent_name   <- paste0(r$id, "_t-", r$order)
+      parents_temp[[parent_name]] <- parent_handle
+    }
+  }
   
   # merge all parents
   parents <- c(parents_now, parents_temp)
   
-  # no parents -> simple prior
+  # --- No parents: simple prior ---
   if (length(parents) == 0) {
     probs <- net$getNodeDefinition(node)
-    return(data.frame(State = states, Probability = probs))
+    return(
+      data.frame(
+        State = states,
+        Probability = probs,
+        row.names = NULL
+      )
+    )
   }
   
   # list of outcomes for all parents
   parent_states <- lapply(parents, function(p) net$getOutcomeIds(p))
   
   # build all combinations of parent states
-  parent_grid <- expand.grid(parent_states, KEEP.OUT.ATTRS = FALSE)
-  # names(parent_grid) <- names(parents)
+  parent_grid <- expand.grid(parent_states, KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE)
+  names(parent_grid) <- names(parents)
   
   # raw CPT definition from SMILE
   raw <- net$getNodeDefinition(node)
   
-  # reshape: each parent combo gets n_states probabilities
-  cpt <- cbind(parent_grid, matrix(raw, ncol = n_states, byrow = TRUE))
-  names(cpt)[(ncol(cpt)-n_states+1):ncol(cpt)] <- states
+  # --- Reshape CPT ---
+  cpt_matrix <- matrix(
+    raw,
+    ncol = n_states,
+    byrow = TRUE
+  )
+  
+  colnames(cpt_matrix) <- states
+  
+  cpt <- cbind(parent_grid, cpt_matrix)
   
   return(cpt)
 }
@@ -325,3 +361,55 @@ replot <- function(x) {
   plot(x, xlim = xlimits, ylim = ylimits)
   
 }
+
+
+
+# Trash
+# old getCPfunction
+# getCPT <- function(net, node, temporal_order = c(1,2)) {
+#   states <- net$getOutcomeIds(node)
+#   n_states <- length(states)
+#   
+#   # parents in the same time slice
+#   parents_now <- net$getParents(node)
+#   names(parents_now) <- unlist(lapply(parents_now, net$getNodeId))
+#   
+#   # parents from previous slices (temporal)
+#   parents_temp <- unlist(lapply(temporal_order, function(x) {
+#     # x = 2
+#     res <- net$getTemporalParents(node, x)
+#     if(length(res) == 0) return(NULL)
+#     resNode <- res[[1]]$handle
+#     resId <- res[[1]]$id
+#     resOrder <- res[[1]]$order
+#     names(resNode) <- paste0(resId, "_t-",resOrder)
+#     return(resNode)
+#     
+#   }))
+#   
+#   # merge all parents
+#   parents <- c(parents_now, parents_temp)
+#   
+#   # no parents -> simple prior
+#   if (length(parents) == 0) {
+#     probs <- net$getNodeDefinition(node)
+#     return(data.frame(State = states, Probability = probs))
+#   }
+#   
+#   # list of outcomes for all parents
+#   parent_states <- lapply(parents, function(p) net$getOutcomeIds(p))
+#   
+#   # build all combinations of parent states
+#   parent_grid <- expand.grid(parent_states, KEEP.OUT.ATTRS = FALSE)
+#   # names(parent_grid) <- names(parents)
+#   
+#   # raw CPT definition from SMILE
+#   raw <- net$getNodeDefinition(node)
+#   
+#   # reshape: each parent combo gets n_states probabilities
+#   cpt <- cbind(parent_grid, matrix(raw, ncol = n_states, byrow = TRUE))
+#   names(cpt)[(ncol(cpt)-n_states+1):ncol(cpt)] <- states
+#   
+#   return(cpt)
+# }
+
