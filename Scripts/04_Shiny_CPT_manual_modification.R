@@ -200,7 +200,7 @@ server <- function(input, output, session) {
       
       selectInput(
         "row_id",
-        "Parent configuration",
+        "Parent configuration (line)",
         choices = seq_len(nrow(cpt())),
         selected = current_row()
       )
