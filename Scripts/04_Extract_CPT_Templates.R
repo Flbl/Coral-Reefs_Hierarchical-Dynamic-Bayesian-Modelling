@@ -78,22 +78,26 @@ source("License.R")
          cpt = x$cpt)
   })
   
+  
+  # Create subdir for raw exports (later combined with manually modified exports)
+  dir.create(file.path(pathProCpt,"TemplateExports"), showWarnings = FALSE)
+  
   # Export CPTS to excel
   lapply(hierCpts, function(x){
     # x = hierCpts[[1]]
-    write.csv(x$cpt, file.path(pathProCpt,paste0("CPT_",x$node,".csv")), row.names = FALSE)
+    write.csv(x$cpt, file.path(file.path(pathProCpt,"TemplateExports"),paste0("CPT_",x$node,".csv")), row.names = FALSE)
     
   })
   
   lapply(coreCpts, function(x){
     # x = hierCpts[[1]]
-    write.csv(x$cpt, file.path(pathProCpt,paste0("CPT_",x$node,".csv")), row.names = FALSE)
+    write.csv(x$cpt, file.path(file.path(pathProCpt,"TemplateExports"),paste0("CPT_",x$node,".csv")), row.names = FALSE)
     
   })
   
   lapply(envCpts, function(x){
     # x = hierCpts[[1]]
-    write.csv(x$cpt, file.path(pathProCpt,paste0("CPT_",x$node,".csv")), row.names = FALSE)
+    write.csv(x$cpt, file.path(file.path(pathProCpt,"TemplateExports"),paste0("CPT_",x$node,".csv")), row.names = FALSE)
     
   })
   

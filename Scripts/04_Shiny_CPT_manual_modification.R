@@ -12,6 +12,8 @@
 library(shiny)
 library(DT)
 
+dir.create(file.path(pathProCpt,"ManualShinyExports"), showWarnings = FALSE)
+
 # =========================
 # Utility functions
 # =========================
@@ -116,6 +118,7 @@ ui <- fluidPage(
     sidebarPanel(
       selectInput("cpt_file", "Select CPT", choices = NULL),
       uiOutput("row_selector"),
+      uiOutput("parent_question"),
       hr(),
       uiOutput("sliders_ui"),
       hr(),
@@ -137,7 +140,7 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
   
-  cpt_dir <- "Data/01_Processed/CPT" #pathProCpt
+  cpt_dir <- file.path(pathProCpt,"TemplateExports") #"Data/01_Processed/CPT" #pathProCpt
   if (!dir.exists(cpt_dir)) {
     stop(paste("CPT directory does not exist:", cpt_dir))
   }
@@ -244,6 +247,103 @@ server <- function(input, output, session) {
     }
   }, ignoreInit = TRUE)
   
+  # Parent question
+  output$parent_question <- renderUI({
+    req(cpt())
+    req(cpt_type())
+    req(input$cpt_file)
+    
+    df <- cpt()
+    
+    # Helper: clean display text
+    clean <- function(x) trimws(gsub("_+", " ", as.character(x)))
+    
+    # Infer child node name from filename (e.g., CPT__Site_.csv -> Site)
+    child_node <- gsub("\\.csv$", "", input$cpt_file)
+    child_node <- gsub("^CPT__+", "", child_node)
+    child_node <- clean(child_node)
+    if (nchar(child_node) == 0) child_node <- "the node"
+    
+    # No-parents CPT: just show a simple prompt
+    if (cpt_type() == "no_parents") {
+      return(tags$div(
+        style = "margin-top: 6px; margin-bottom: 6px;",
+        tags$span("What is the probability that "),
+        tags$span(style = "font-weight: bold;", paste0("'", child_node, "'")),
+        tags$span(" is:")
+      ))
+    }
+    
+    # With-parents CPT
+    sc <- state_cols()
+    row <- current_row()
+    
+    # Parent columns = all non-probability columns
+    parent_cols <- setdiff(seq_along(df), sc)
+    req(length(parent_cols) > 0)
+    
+    parent_names <- clean(names(df)[parent_cols])
+    # Secondary clean for parents for t-n
+    parent_names <- gsub(".","-", parent_names, fixed = TRUE)
+    parent_vals  <- clean(df[row, parent_cols, drop = TRUE])
+    
+    # --- Build a per-parent color map (unique values per parent column)
+    # pal <- palette.colors(palette = "Okabe-Ito")
+    pal <- c("#0072B2", "#56B4E9", "#F0E442", "#E69F00", "#D55E00")
+    
+    # For each parent column, map its unique values to palette colors
+    # parent_color_maps <- lapply(parent_cols, function(j) {
+    #   vals <- clean(df[[j]])
+    #   u <- unique(vals)
+    #   cols <- rep(pal, length.out = length(u))
+    #   stats::setNames(cols, u)
+    # })
+    parent_color_maps <- lapply(parent_cols, function(j) {
+      vals <- df[[j]]
+      # if it's a factor, use its defined level order; else use unique order
+      u_ord <- if (is.factor(vals)) levels(vals) else unique(clean(vals))
+      u_ord <- clean(u_ord)
+      
+      cols <- pal[round(seq(1, length(pal), length.out = length(u_ord)))]
+      stats::setNames(cols, u_ord)
+    })
+    
+    # Build condition fragments: "[Parent] is [Value]" with value colored
+    cond_fragments <- lapply(seq_along(parent_cols), function(k) {
+      p_name <- parent_names[k]
+      p_val  <- parent_vals[k]
+      cmap   <- parent_color_maps[[k]]
+      colhex <- unname(cmap[p_val])
+      
+      tags$span(
+        style = "font-weight: bold;",
+        tags$span(paste0(p_name, " is ")),
+        tags$span(
+          style = paste0("color:", colhex, ";"),
+          paste0(p_val)
+        )
+      )
+    })
+    
+    # Interleave " and " between fragments
+    cond_with_and <- list()
+    for (k in seq_along(cond_fragments)) {
+      cond_with_and <- c(cond_with_and, list(cond_fragments[[k]]))
+      if (k < length(cond_fragments)) {
+        cond_with_and <- c(cond_with_and, list(tags$span(" and ")))
+      }
+    }
+    
+    tags$div(
+      style = "margin-top: 6px; margin-bottom: 6px;",
+      tags$span("When "),
+      cond_with_and,
+      tags$span(", what is the probability that "),
+      tags$span(style = "font-weight: bold;", paste0("'", child_node, "'")),
+      tags$span(" is:")
+    )
+  })
+  
   
   # ---- Sliders ----
   output$sliders_ui <- renderUI({
@@ -259,12 +359,23 @@ server <- function(input, output, session) {
       state_names <- as.character(df$State)
       
       lapply(seq_along(probs), function(i) {
-        tagList(
+        tags$div(
+          style = "margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #eee;",
+          
+          # State title
+          tags$div(
+            style = "font-weight: bold; margin-bottom: 4px; text-align: center;",
+            gsub("_"," ",state_names[i])
+          ),
+          
+          # Lock checkbox (label is always "Lock")
           checkboxInput(
             paste0("lock_", i),
-            label = state_names[i],
+            label = "Lock",
             value = isTRUE(locks[i])
           ),
+          
+          # Slider
           sliderInput(
             paste0("p_", i),
             label = NULL,
@@ -288,12 +399,23 @@ server <- function(input, output, session) {
       state_names <- sub("^P_", "", names(df)[sc])
       
       lapply(seq_along(probs), function(i) {
-        tagList(
+        tags$div(
+          style = "margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #eee;",
+          
+          # State title
+          tags$div(
+            style = "font-weight: bold; margin-bottom: 4px; text-align: center;",
+            gsub("_"," ",state_names[i])
+          ),
+          
+          # Lock checkbox (label is always "Lock")
           checkboxInput(
             paste0("lock_", i),
-            label = state_names[i],
+            label = "Lock",
             value = isTRUE(locks[i])
           ),
+          
+          # Slider
           sliderInput(
             paste0("p_", i),
             label = NULL,
@@ -520,7 +642,7 @@ server <- function(input, output, session) {
         cex <- max(cex_min, min(cex_max, scaled))
         
         mid <- (lefts[i] + rights[i]) / 2
-        text(mid, 0.50, labels = sprintf("%s\n%.2f", state_names[i], probs[i]), cex = cex)
+        text(mid, 0.50, labels = sprintf("%s\n%.2f", gsub("_"," ",state_names[i]), probs[i]), cex = cex)
       }
     }
     
@@ -560,7 +682,7 @@ server <- function(input, output, session) {
       df[, sc] <- round(df[, sc], 2)
     }
     
-    write.csv(df, file.path(cpt_dir, input$cpt_file), row.names = FALSE)
+    write.csv(df, file.path(pathProCpt,"ManualShinyExports", input$cpt_file), row.names = FALSE)
     cpt(df)  # keep app state consistent with what you saved
     
     showNotification("CPT saved", type = "message")
@@ -575,13 +697,13 @@ server <- function(input, output, session) {
 shinyApp(ui, server)
 
 
-df1 <- read.csv(file.path(pathProCpt, "CPT__Site_.csv"), header = TRUE)
-df1
-
-df2 <- read.csv(file.path(pathProCpt, "CPT_Coral_Reef_Ecosystem_Prey_Availability.csv"), header = TRUE)
-df2
-
-df3 <- read.csv(file.path(pathProCpt, "CPT_Env_Temperature_Site_XX.csv"), header = TRUE)
-df3
-
+# df1 <- read.csv(file.path(pathProCpt, "CPT__Site_.csv"), header = TRUE)
+# df1
+# 
+# df2 <- read.csv(file.path(pathProCpt, "CPT_Coral_Reef_Ecosystem_Prey_Availability.csv"), header = TRUE)
+# df2
+# 
+# df3 <- read.csv(file.path(pathProCpt, "CPT_Env_Temperature_Site_XX.csv"), header = TRUE)
+# df3
+# 
 
