@@ -102,44 +102,7 @@
   
   
   # Create the nodes
-  # Function to create CPT node :
-  createTemplateCptNode <- function(net, id, name, outcomes, xPos = NULL, yPos = NULL, temporal = 0) {
-    # Create blank node
-    handle <- net$addNode(net$NodeType$CPT, id)
-    
-    # Set node name (here same as id but can be more "pretty" with spaces and parenthesis for ex)
-    net$setNodeName(handle, name)
-    
-    # Add position (optional)
-    if(!is.null(xPos) &&  !is.null(yPos)) {
-      net$setNodePosition(handle, xPos, yPos, 85L, 55L)
-    }
-    
-    # Rename the original two outcomes if standard outcome (which it should be)
-    net$setOutcomeId(handle, 0, outcomes[1])
-    net$setOutcomeId(handle, 1, outcomes[2])
-    
-    # add and names outcomes > 2
-    if(length(outcomes) > 2) {
-      for(outcome in outcomes[3:length(outcomes)]) {
-        net$addOutcome(handle, outcome)
-      }
-    }
-    
-    # if(temporal == TRUE) {
-      # Temporal node types are placed in a temporal plate
-      # there are 4 states: 
-      # 0: CONTEMPORAL => not temporal
-      # 1: ANCHOR => Outside the temporal plate with children inside the first time slice of the temporal plate
-      # 2: TERMINAL => nodes outside the temporal plate with parents inside the plate, run on the last time slice only
-      # 3: PLATE => "The" temporal type: nodes inside the temporal plate with incoming/outgoing temporal arcs
-      net$setNodeTemporalType(handle, temporal)
-    # }
-   
-    
-    return(handle)
-    
-  }
+  
   
   
   # Function that works line by line.
@@ -466,45 +429,15 @@
   net$getParentIds("Env_Local_Pressure_Station_XX")
   
   # Function to get genie generated env archetype node specifications
-  getArchetypeSpec <- function(net, archetype) {
-    list(
-      outcomes = net$getOutcomeIds(archetype),
-      parents  = net$getParentIds(archetype),
-      children = net$getChildIds(archetype),
-      temporal = net$getNodeTemporalType(archetype)
-    )
-  }
   
-  getArchetypeSpec(net, "Env_Temperature_Site_XX")
-  getArchetypeSpec(net, "Env_Bleaching_Alert_Area_Station_XX")
-  getArchetypeSpec(net, "Env_Gravity_Station_XX")
-  getArchetypeSpec(net, "Env_Local_Pressure_Station_XX")
-  getArchetypeSpec(net, "Env_Nino_Phase_General")
+  getNodeSpec(net, "Env_Temperature_Site_XX")
+  getNodeSpec(net, "Env_Bleaching_Alert_Area_Station_XX")
+  getNodeSpec(net, "Env_Gravity_Station_XX")
+  getNodeSpec(net, "Env_Local_Pressure_Station_XX")
+  getNodeSpec(net, "Env_Nino_Phase_General")
   
   
-  # Helper functions
-  makeSpatialNode <- function(template, station) {
-    gsub("XX", station, template)
-  }
   
-  ensureNode <- function(net, node_id, archetype) {
-    if (!(node_id %in% net$getAllNodeIds())) {
-      info <- getArchetypeSpec(net, archetype)
-      createTemplateCptNode(
-        net,
-        id = node_id,
-        name = node_id,
-        outcomes = info$outcomes,
-        temporal = info$temporal
-      )
-    }
-  }
-  
-  ensureArc <- function(net, parent, child) {
-    if (!(child %in% net$getChildIds(parent))) {
-      net$addArc(parent, child)
-    }
-  }
   
   # Function to create environmental nodes from model template archetypes and csv data
   # No direct observed csv connect to station/site nodes. So we don't need to wire the arcs to all stations/sites in this function
@@ -571,7 +504,7 @@
     # - its outcomes (not used here directly)
     # - its parents and children (critical for reconnecting structure)
     # - its temporal type (PLATE / ANCHOR / etc.)
-    info <- getArchetypeSpec(net, archetype)
+    info <- getNodeSpec(net, archetype)
     
     # Determine which spatial units the node must be replicated over.
     # This is inferred directly from the CSV content.
@@ -631,7 +564,7 @@
         
         # Ensure child exists
         if (!(child_id %in% nodeList)) {
-          child_info <- getArchetypeSpec(net, child)
+          child_info <- getNodeSpec(net, child)
           createTemplateCptNode(
             net,
             id       = child_id,
@@ -712,7 +645,7 @@
   length(net$getAllNodeIds())
   # nodes[grep("Chloro",nodes)]
   # nodes[grep("Conditio",nodes)]
-  # getArchetypeSpec(net, "Env_Site_bourail_Conditions")
+  # getNodeSpec(net, "Env_Site_bourail_Conditions")
   
   # Gravity
   createEnvNodesFromCSV(
@@ -765,12 +698,12 @@
   nodes[grep("Conditio",nodes)]
   nodes[grep("Local",nodes)]
   nodes[grep("Grav",nodes)]
-  getArchetypeSpec(net, "Env_Conditions_Site_bourail")
-  # getArchetypeSpec(net, "Env_Local_Pressure_Station_port_boise")
-  getArchetypeSpec(net, "Env_Local_Pressure_Station_yejele")
-  getArchetypeSpec(net, "Env_Gravity_Station_yejele")
-  getArchetypeSpec(net, "Env_Local_Pressure_Station_hiengabat")
-  getArchetypeSpec(net, "Env_Gravity_Station_hiengabat")
+  getNodeSpec(net, "Env_Conditions_Site_bourail")
+  # getNodeSpec(net, "Env_Local_Pressure_Station_port_boise")
+  getNodeSpec(net, "Env_Local_Pressure_Station_yejele")
+  getNodeSpec(net, "Env_Gravity_Station_yejele")
+  getNodeSpec(net, "Env_Local_Pressure_Station_hiengabat")
+  getNodeSpec(net, "Env_Gravity_Station_hiengabat")
   
   # Delete all archetypal nodes
   todel <- nodes[grep("XX",nodes)]
@@ -829,7 +762,7 @@
         
         target <- paste0(v, "_Site_", site)
         
-        # getArchetypeSpec(net, cond_node)
+        # getNodeSpec(net, cond_node)
         # ensureArc
         # target %in% net$getChildIds(cond_node)
         ensureArc(net, cond_node, target)
@@ -860,8 +793,8 @@
     }
   }
   
-  # getArchetypeSpec(net, "Env_Local_Pressure_Station_paradis")
-  getArchetypeSpec(net, "RorcScraperAbund_Site_bourail")
+  # getNodeSpec(net, "Env_Local_Pressure_Station_paradis")
+  getNodeSpec(net, "RorcScraperAbund_Site_bourail")
   # nodes[grep("RorcScraperAbund",nodes)]
   # nodes[grep("Scraper",nodes)]
   
@@ -1013,7 +946,7 @@
   #   # - its outcomes (not used here directly)
   #   # - its parents and children (critical for reconnecting structure)
   #   # - its temporal type (PLATE / ANCHOR / etc.)
-  #   info <- getArchetypeSpec(net, archetype)
+  #   info <- getNodeSpec(net, archetype)
   #   
   #   # Determine which spatial units the node must be replicated over.
   #   # This is inferred directly from the CSV content.
@@ -1097,7 +1030,7 @@
   #         if(grepl("Env_Cyclone_R34", new_id)) net$addTemporalArc(new_id, child_id, 1)
   #         
   #       } else {
-  #         info_Child <- getArchetypeSpec(net, child)
+  #         info_Child <- getNodeSpec(net, child)
   #         
   #         child_handle <- createTemplateCptNode(net, 
   #                                               id = child_id, 
@@ -1126,7 +1059,7 @@
   #             
   #             # Create the node if it doesn't exist (it should exist depending on the order of nodes generation)
   #             # First fetch info
-  #             info_Child2 <- getArchetypeSpec(net, info_Child$children)
+  #             info_Child2 <- getNodeSpec(net, info_Child$children)
   #             
   #             # Then create the node
   #             child2_handle <- createTemplateCptNode(net, 

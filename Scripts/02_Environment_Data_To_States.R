@@ -198,7 +198,7 @@ source("Scripts/00_Initialisation.R")
   ninoa
   
   dir.create(file.path(pathDat, "01_Processed","Environment","OceanicNinoIndex"), showWarnings = FALSE)
-  write.csv(ninoa, file.path(pathDat, "01_Processed","Environment","OceanicNinoIndex","Env_General_ONI_New_Caledonia.csv"), row.names = FALSE)
+  write.csv(ninoa, file.path(pathDat, "01_Processed","Environment","OceanicNinoIndex","Env_Nino_Phase_General_ONI.csv"), row.names = FALSE)
   
 
   # TEMPERATURE ----
@@ -367,7 +367,7 @@ source("Scripts/00_Initialisation.R")
     
     dir.create(file.path(pathDat, "01_Processed","Environment","Temperature"), showWarnings = FALSE)
 
-    write.csv(sst_site_year_states, file = file.path(pathDat, "01_Processed","Environment","Temperature","RORC_Env_TemperatureRegime_Site_States_hdbn.csv"), row.names = FALSE)
+    write.csv(sst_site_year_states, file = file.path(pathDat, "01_Processed","Environment","Temperature","RORC_Env_Temperature_Regime_Site_States_hdbn.csv"), row.names = FALSE)
     
     # eo temperature ----
     
@@ -600,7 +600,7 @@ source("Scripts/00_Initialisation.R")
     chl_site_year_states <- chl_site_year[chl_site_year$year >2012,]
     
     dir.create(file.path(pathDat, "01_Processed","Environment","Chlorophyll_a"), showWarnings = FALSE)
-    write.csv(chl_site_year_states, file = file.path(pathDat, "01_Processed","Environment","Chlorophyll_a","RORC_Env_ChlorophyllaRegime_Site_States_hdbn.csv"), row.names = FALSE)
+    write.csv(chl_site_year_states, file = file.path(pathDat, "01_Processed","Environment","Chlorophyll_a","RORC_Env_Chlorophyll-a_Regime_Site_States_hdbn.csv"), row.names = FALSE)
     
     # eo chlorophyll a ----
     
@@ -721,7 +721,7 @@ source("Scripts/00_Initialisation.R")
       )
     
     dir.create(file.path(pathDat, "01_Processed","Environment","Heatwaves_BAA"), showWarnings = FALSE)
-    write.csv(baa_station_year, file.path(pathDat, "01_Processed","Environment","Heatwaves_BAA","Env_HeatwavesBAA_Station_States_New_Caledonia.csv"), row.names = FALSE)
+    write.csv(baa_station_year, file.path(pathDat, "01_Processed","Environment","Heatwaves_BAA","Env_Bleaching_Alert_Area_Station_States_New_Caledonia.csv"), row.names = FALSE)
     
     
     # eobaaR# eo heatwaves ----
@@ -783,7 +783,7 @@ source("Scripts/00_Initialisation.R")
       )
         
     # Save !
-    write.csv(cycCount, file.path(pathDat, "01_Processed","Environment","Cyclones","Env_StormCount_General_States_New_Caledonia.csv"), row.names = FALSE)
+    write.csv(cycCount, file.path(pathDat, "01_Processed","Environment","Cyclones","Env_Cyclone_Frequency_General_States_New_Caledonia.csv"), row.names = FALSE)
     
     # Removing track parts that have NA R34, meaning we consider the depression became "negligible"
     # Potentially add later back points that do not have R34 but USA_WIND values > 34 ?
@@ -909,7 +909,7 @@ source("Scripts/00_Initialisation.R")
       )
     
     # WRITE THE STATES !
-    write.csv(cyclone_R34_States, file.path(pathDat, "01_Processed","Environment","Cyclones","Env_R34StormCount_Station_States_New_Caledonia.csv"), row.names = FALSE)
+    write.csv(cyclone_R34_States, file.path(pathDat, "01_Processed","Environment","Cyclones","Env_Cyclone_R34_Station_States_2013_2025_New_Caledonia.csv"), row.names = FALSE)
     
     
     

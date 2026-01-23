@@ -85,6 +85,15 @@ if(init1 == "02_Environment_Data_To_States.R") {
 }
 
 
+if(init1 == "03_HDBN_Template_EM.R") {
+  
+  
+  # Travel time
+  # This package will install pretty much all other needed packages for SIG processing
+  if (!require("purrr")) install.packages("purrr")
+  
+  
+}
 
 if(init1 == "03_HDBN_Template.R") {
   
@@ -202,6 +211,183 @@ getCPT <- function(net, node, temporal_order = c(1,2)) {
   return(cpt)
 }
 
+
+# Function to create CPT node :
+createTemplateCptNode <- function(net, id, name, outcomes, xPos = NULL, yPos = NULL, temporal = 0) {
+  # Create blank node
+  handle <- net$addNode(net$NodeType$CPT, id)
+  
+  # Set node name (here same as id but can be more "pretty" with spaces and parenthesis for ex)
+  net$setNodeName(handle, name)
+  
+  # Add position (optional)
+  if(!is.null(xPos) &&  !is.null(yPos)) {
+    net$setNodePosition(handle, xPos, yPos, 85L, 55L)
+  }
+  
+  # Rename the original two outcomes if standard outcome (which it should be)
+  net$setOutcomeId(handle, 0, outcomes[1])
+  net$setOutcomeId(handle, 1, outcomes[2])
+  
+  # add and names outcomes > 2
+  if(length(outcomes) > 2) {
+    for(outcome in outcomes[3:length(outcomes)]) {
+      net$addOutcome(handle, outcome)
+    }
+  }
+  
+  # if(temporal == TRUE) {
+  # Temporal node types are placed in a temporal plate
+  # there are 4 states: 
+  # 0: CONTEMPORAL => not temporal
+  # 1: ANCHOR => Outside the temporal plate with children inside the first time slice of the temporal plate
+  # 2: TERMINAL => nodes outside the temporal plate with parents inside the plate, run on the last time slice only
+  # 3: PLATE => "The" temporal type: nodes inside the temporal plate with incoming/outgoing temporal arcs
+  net$setNodeTemporalType(handle, temporal)
+  # }
+  
+  
+  return(handle)
+  
+}
+
+
+# Function to get genie generated env node specifications ("archetype" is a kept artifact of previous function version)
+# getNodeSpec <- function(net, archetype) {
+#   list(
+#     nodeName = archetype,
+#     outcomes = net$getOutcomeIds(archetype),
+#     parents  = net$getParentIds(archetype),
+#     children = net$getChildIds(archetype),
+#     temporal = net$getNodeTemporalType(archetype)
+#   )
+# }
+archetype = "Structural_Complexity"
+archetype = "Branching_Coral_Cover_Station_TREND_XX"
+archetype = "Fish_Diversity"
+temporal_order = c(1, 2)
+
+getNodeSpec <- function(net, archetype, temporal_order = c(1, 2)) {
+  
+  safe_temporal <- function(expr) {
+    tryCatch(expr, error = function(e) NULL)
+  }
+  
+  # --- Base contemporaneous spec ---
+  spec <- list(
+    nodeName = archetype,
+    nodeHandle = net$getNode(archetype),
+    outcomes = net$getOutcomeIds(archetype),
+    parents  = net$getParentIds(archetype),
+    children = net$getChildIds(archetype),
+    temporal = net$getNodeTemporalType(archetype)
+  )
+  
+  # Helper: normalize TemporalInfo output to a list of objects
+  normalize_temporal_info <- function(x) {
+    if (is.null(x)) return(list())
+    # Expected: list of TemporalInfo
+    if (is.list(x) && length(x) > 0) return(x)
+    # Fallback: a single TemporalInfo (rare wrapper variant)
+    list(x)
+  }
+  
+  # Helper: convert list of TemporalInfo to details df
+  to_details_df <- function(info_list) {
+    if (length(info_list) == 0) {
+      return(data.frame(id = character(0), order = integer(0), handle = integer(0)))
+    }
+    out <- lapply(info_list, function(r) {
+      data.frame(
+        id     = r$id,
+        order  = as.integer(r$order),
+        handle = as.integer(r$handle),
+        stringsAsFactors = FALSE
+      )
+    })
+    do.call(rbind, out)
+  }
+  
+  # --- Temporal parents (API supports lag argument) ---
+  tp_all <- list()
+  for (lag in temporal_order) {
+    resP <- safe_temporal(net$getTemporalParents(archetype, lag))
+    resP <- normalize_temporal_info(resP)
+    if (length(resP) == 0) next
+    tp_all <- c(tp_all, resP)
+  }
+  
+  temporalParents_details <- to_details_df(tp_all)
+  
+  # --- Temporal children (API returns all; filter by $order) ---
+  tc_all <- safe_temporal(net$getTemporalChildren(archetype))
+  tc_all <- normalize_temporal_info(tc_all)
+  
+  if (length(tc_all) > 0) {
+    tc_all <- Filter(function(r) !is.null(r$order) && as.integer(r$order) %in% temporal_order, tc_all)
+  }
+  
+  temporalChildren_details <- to_details_df(tc_all)
+  
+  # Optional: stable ordering
+  if (nrow(temporalParents_details) > 0) {
+    temporalParents_details <- temporalParents_details[order(temporalParents_details$order, temporalParents_details$id), ]
+    rownames(temporalParents_details) <- NULL
+  }
+  if (nrow(temporalChildren_details) > 0) {
+    temporalChildren_details <- temporalChildren_details[order(temporalChildren_details$order, temporalChildren_details$id), ]
+    rownames(temporalChildren_details) <- NULL
+  }
+  
+  # Human-readable labels (your convention)
+  temporalParents_ids <- if (nrow(temporalParents_details) == 0) {
+    character(0)
+  } else {
+    paste0(temporalParents_details$id, "_t-", temporalParents_details$order)
+  }
+  
+  temporalChildren_ids <- if (nrow(temporalChildren_details) == 0) {
+    character(0)
+  } else {
+    paste0(temporalChildren_details$id, "_t+", temporalChildren_details$order)
+  }
+  
+  # Attach
+  spec$temporalParents_details  <- temporalParents_details
+  spec$temporalChildren_details <- temporalChildren_details
+  spec$temporalParents_ids      <- temporalParents_ids
+  spec$temporalChildren_ids     <- temporalChildren_ids
+  
+  return(spec)
+}
+
+
+
+
+
+# Helper functions
+makeSpatialNode <- function(template, station) {
+  gsub("XX", station, template)
+}
+
+ensureNode <- function(net, node_id, archetype) {
+  if (!(node_id %in% net$getAllNodeIds())) {
+    info <- getArchetypeSpec(net, archetype)
+    createTemplateCptNode(
+      net,
+      id = node_id,
+      name = node_id,
+      outcomes = info$outcomes,
+      temporal = info$temporal
+    )
+  }
+}
+
+ensureArc <- function(net, parent, child) {
+  if (!(child %in% net$getChildIds(parent))) {
+    net$addArc(parent, child)
+  }
+}
 
 
 # Coding directly in R a function that calls griddap and its OPeNDAP hyperslab protocol to request data off the NOAA ERDDAP data server
