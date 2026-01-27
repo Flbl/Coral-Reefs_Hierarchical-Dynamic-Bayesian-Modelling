@@ -36,6 +36,9 @@
   init1 <- tail(unlist(strsplit(rstudioapi::getActiveDocumentContext()$path, "/")), n = 1)
   source("Scripts/00_Initialisation.R")
 
+  dir.create(file.path(pathProSpe,"Thresholds"), showWarnings = FALSE)
+  dir.create(file.path(pathProSpe,"Thresholds","General"), showWarnings = FALSE)
+  
 
   # eo INIT ----
 
@@ -46,15 +49,15 @@
 # RORC ----
 
   # Coral
-  coralRorc <- read.csv(file.path("Data", "Species","RORC_Coral_Data_hdbn.csv"))
+  coralRorc <- read.csv(file.path(pathSpe,"RORC_Coral_Data_hdbn.csv"))
   # coralRorc$Station <- gsub(" ","_", coralRorc$Station)
   # coralRorc$Site <- gsub(" ","_", coralRorc$Site)
   
   # Fish
-  fishRorc <- read.csv(file.path("Data", "Species","RORC_Fish_Data_hdbn.csv"))
+  fishRorc <- read.csv(file.path(pathSpe,"RORC_Fish_Data_hdbn.csv"))
   
   # Inv
-  invRorc <- read.csv(file.path("Data", "Species","RORC_Inv_Data_hdbn.csv"))
+  invRorc <- read.csv(file.path(pathSpe,"RORC_Inv_Data_hdbn.csv"))
 
 
   # eo rorc ----
@@ -131,7 +134,7 @@
 # GENERAL THRESHOLD ----
   
   # All data is used to calulate data driven thresholds using GMM and quantiles to establish global states of quality
-  # This assumes that there is enough data in the temporal series to distinguish the "health" gradient from zero/bad to good/very good
+  # This assumes that there is enough data in the temporal series to distinguish the "health" gradient from zero/bad to High/very High
   
   # Create Thresholds from the available data
   # For each variable, make a gaussian Mixture Model and estimate the thresholds. Calculate also the quantiles 
@@ -153,9 +156,11 @@
       # x = coralRorc$RorcSD_SI
       # x = coralRorc$RorcRC
       # x = coralRorc$RorcCoralRichness
+      # x = coralRorc$RorcFS
       # nbState = 5
       # zeroState = TRUE
       # plot = TRUE
+      # varName = "VariableFS"
       # varName = "VariableHCO"
       # eo test zone
       # print(x)
@@ -192,7 +197,7 @@
             print(summary(model))
             # Uncertainty plot
             # plot(model, what = "uncertainty")
-            # Uncertainty mean (closer to zero = good)
+            # Uncertainty mean (closer to zero = High)
             # mean(model$uncertainty)
             # Model modes
             # model$parameters$mean
@@ -341,7 +346,7 @@
             # vline_df <- as.data.frame(t(vline_df))
             # vline_df$GMM <- as.numeric(vline_df$GMM)
             # vline_df$Quantiles <- as.numeric(vline_df$Quantiles)
-            # vline_df$State <- c("Zero","Zero - Low","Low - Intermediate","Intermediate - Good","Good - Very Good")
+            # vline_df$State <- c("Zero","Zero - Low","Low - Intermediate","Intermediate - High","High - Very High")
             # vline_df$Method <- "Quantiles"
             
             thresQTL_Plot <- c(-max(thresQTL)/100, thresQTL)
@@ -350,7 +355,7 @@
             rectDf <- data.frame(xmin = thresQTL_Plot[-length(thresQTL_Plot)],
                                  xmax = thresQTL_Plot[-1],
                                  fillC = state_colors,
-                                 state = factor(c("Zero","Low","Intermediate","Good","Very Good"), levels = c("Zero","Low","Intermediate","Good","Very Good"))
+                                 state = factor(c("Zero","Low","Intermediate","High","Very High"), levels = c("Zero","Low","Intermediate","High","Very High"))
                                  )
             
             # Basic plot
@@ -482,10 +487,12 @@
     
     # Function tests
     # makeDDThresholds(coralRorc$RorcHCB, varName = "RorcHCB", nbState = 5, zeroState = TRUE, plot = TRUE, savePlot = FALSE, savePath = file.path(pathPro, "Thresholds","General"))
-    makeDDThresholds(coralRorcMean$RorcHCB, varName = "RorcHCB", nbState = 5, zeroState = TRUE, plot = TRUE, savePlot = FALSE, savePath = file.path(pathPro, "Thresholds","General"))
+    makeDDThresholds(coralRorcMean$RorcHCB, varName = "RorcHCB", nbState = 5, zeroState = TRUE, plot = TRUE, savePlot = FALSE, savePath = file.path(pathProSpe, "Thresholds","General"))
     
     # makeDDThresholds(coralRorc$RorcHCO, varName = "RorcHCO", nbState = 5, zeroState = TRUE, plot = TRUE)
     makeDDThresholds(coralRorcMean$RorcHCO, varName = "RorcHCO", nbState = 5, zeroState = TRUE, plot = TRUE)
+    
+    makeDDThresholds(coralRorcMean$RorcFS, varName = "RorcFS", nbState = 5, zeroState = TRUE, plot = TRUE)
     
     # makeDDThresholds(coralRorc$RorcCoralRichness, varName = "RorcSR", nbState = 5, zeroState = TRUE, plot = TRUE)
     makeDDThresholds(coralRorcMean$RorcCoralRichness, varName = "RorcSR", nbState = 5, zeroState = TRUE, plot = TRUE)
@@ -503,14 +510,15 @@
     
     makeDDThresholds(invRorc$RorcInvAbund, varName = "RorcInvAbund", nbState = 5, zeroState = TRUE, plot = TRUE)
     makeDDThresholds(invRorc$RorcInvRichness, varName = "RorcInvSR", nbState = 5, zeroState = TRUE, plot = TRUE)
-      
+    makeDDThresholds(invRorc$RorcUrchinAbund, varName = "RorcUrchinAbund", nbState = 5, zeroState = TRUE, plot = TRUE)
+    
       
     # Compute Coral General Thresholds
     thresholdsCoral <- do.call(rbind, lapply(varCoral, function(x, data = coralRorc) {
       
       # x = varNames[1]
       
-      res <- makeDDThresholds(data[,x], varName = x, nbState = 5, zeroState = TRUE, plot = TRUE, savePlot = TRUE, savePath = file.path(pathPro, "Thresholds","General"))
+      res <- makeDDThresholds(data[,x], varName = x, nbState = 5, zeroState = TRUE, plot = TRUE, savePlot = TRUE, savePath = file.path(pathProSpe, "Thresholds","General"))
       
       return(res)
     }
@@ -522,7 +530,7 @@
       
       # x = varNames[1]
       
-      res <- makeDDThresholds(data[,x], varName = x, nbState = 5, zeroState = TRUE, plot = TRUE, savePlot = TRUE, savePath = file.path(pathPro, "Thresholds","General"))
+      res <- makeDDThresholds(data[,x], varName = x, nbState = 5, zeroState = TRUE, plot = TRUE, savePlot = TRUE, savePath = file.path(pathProSpe, "Thresholds","General"))
       
       return(res)
     }
@@ -535,7 +543,7 @@
       
       # x = varNames[1]
       
-      res <- makeDDThresholds(data[,x], varName = x, nbState = 5, zeroState = TRUE, plot = TRUE, savePlot = TRUE, savePath = file.path(pathPro, "Thresholds","General"))
+      res <- makeDDThresholds(data[,x], varName = x, nbState = 5, zeroState = TRUE, plot = TRUE, savePlot = TRUE, savePath = file.path(pathProSpe, "Thresholds","General"))
       
       return(res)
     }
@@ -545,13 +553,13 @@
     thresholdsGeneral <- rbind(thresholdsCoral, thresholdsFish, thresholdsInv)
     
     # To be modified manually when there's warnings
-    write.csv(thresholdsGeneral, file = file.path(pathPro, "Thresholds","Thresholds_General_DD.csv"), row.names = FALSE)
+    write.csv(thresholdsGeneral, file = file.path(pathProSpe, "Thresholds","Thresholds_General_DD.csv"), row.names = FALSE)
     
     
   # Assign Thresholds to data and export new csv to be read for hierarchical model construction
     
-    thdGeneral <- read.csv(file.path(pathPro, "Thresholds","Thresholds_General_DD.csv"))
-    thdGeneralStates <- c("Zero","Low","Medium","Good","Very_Good")
+    thdGeneral <- read.csv(file.path(pathProSpe, "Thresholds","Thresholds_General_DD.csv"))
+    thdGeneralStates <- c("Zero","Low","Medium","High","Very_High")
     colnames(thdGeneral)[3:(length(colnames(thdGeneral))-1)] <- thdGeneralStates
     
     # Uniform Function to assign between different datasets
@@ -568,8 +576,9 @@
       res[val == thd$Zero] <- "Zero"
       res[val > thd$Zero & val <= thd$Low] <- "Low"
       res[val > thd$Low & val <= thd$Medium] <- "Medium"
-      res[val > thd$Medium & val <= thd$Good] <- "Good"
-      res[val > thd$Good] <- "Very_Good"
+      res[val > thd$Medium & val <= thd$High] <- "High"
+      res[val > thd$High] <- "Very_High"
+        
       
       return(res)
       
@@ -588,9 +597,9 @@
     invRorcGeneralStates[varInv] <- lapply(varInv, assignDDThresholds, data = invRorcMean, thds = thdGeneral)
     
     # Write to csv
-    write.csv(coralRorcGeneralStates, file = file.path(pathPro,"RORC_Coral_Station_General_States_hdbn.csv"), row.names = FALSE)
-    write.csv(fishRorcGeneralStates, file = file.path(pathPro,"RORC_Fish_Station_General_States_hdbn.csv"), row.names = FALSE)
-    write.csv(invRorcGeneralStates, file = file.path(pathPro,"RORC_Inv_Station_General_States_hdbn.csv"), row.names = FALSE)
+    write.csv(coralRorcGeneralStates, file = file.path(pathProSpe,"RORC_Coral_Station_General_States_hdbn.csv"), row.names = FALSE)
+    write.csv(fishRorcGeneralStates, file = file.path(pathProSpe,"RORC_Fish_Station_General_States_hdbn.csv"), row.names = FALSE)
+    write.csv(invRorcGeneralStates, file = file.path(pathProSpe,"RORC_Inv_Station_General_States_hdbn.csv"), row.names = FALSE)
     
     
     
@@ -779,9 +788,9 @@
             
             # classification: require either single-year gate OR cumulative gate
             if (gate_single) {
-              if (dif_i > 0) Trend[i] <- "Recovering" else if (dif_i < 0) Trend[i] <- "Degrading" else Trend[i] <- "Stable"
+              if (dif_i > 0) Trend[i] <- "Increasing" else if (dif_i < 0) Trend[i] <- "Decreasing" else Trend[i] <- "Stable"
             } else if (gate_cum) {
-              if (cum_i > 0) Trend[i] <- "Recovering" else if (cum_i < 0) Trend[i] <- "Degrading" else Trend[i] <- "Stable"
+              if (cum_i > 0) Trend[i] <- "Increasing" else if (cum_i < 0) Trend[i] <- "Decreasing" else Trend[i] <- "Stable"
             } else {
               Trend[i] <- "Stable"
             }
@@ -820,19 +829,19 @@
       geom_point(aes(color = Trend))+
       scale_color_manual(
         values = c(
-          "Degrading"  = "#D55E00",
-          "Recovering" = "#009E73",
+          "Decreasing"  = "#D55E00",
+          "Increasing" = "#009E73",
           "Stable"     = "#56B4E9",
           "NA"         = "#999999"   # now a real category → legend appears
         ),
-        limits = c("Degrading","Recovering","Stable","NA"),
+        limits = c("Decreasing","Increasing","Stable","NA"),
         drop = FALSE
       ) +
       theme_classic()
     
     
     # Compute for all variables
-    pathTrends <- file.path(pathPro,"Thresholds","Trends")
+    pathTrends <- file.path(pathProSpe,"Thresholds","Trends")
     dir.create(pathTrends, showWarnings = FALSE)
     # Coral
     lapply(varCoral, function(x) {
@@ -873,7 +882,7 @@
         left_join(trendsdf, by = meta_cols)
       
     }    
-    write.csv(coralMeanTrend, file = file.path(pathPro, paste0("RORC_Coral_Station_Trends_States_hdbn.csv")), row.names = FALSE)
+    write.csv(coralMeanTrend, file = file.path(pathProSpe, paste0("RORC_Coral_Station_Trends_States_hdbn.csv")), row.names = FALSE)
     
     # Fish
     fishMeanTrend <- fishRorcMean
@@ -893,7 +902,7 @@
         left_join(trendsdf, by = meta_cols)
       
     }    
-    write.csv(fishMeanTrend, file = file.path(pathPro, paste0("RORC_Fish_Station_Trends_States_hdbn.csv")), row.names = FALSE)
+    write.csv(fishMeanTrend, file = file.path(pathProSpe, paste0("RORC_Fish_Station_Trends_States_hdbn.csv")), row.names = FALSE)
     
     
     # Inv
@@ -914,15 +923,15 @@
         left_join(trendsdf, by = meta_cols)
       
     }    
-    write.csv(invMeanTrend, file = file.path(pathPro, paste0("RORC_Inv_Station_Trends_States_hdbn.csv")), row.names = FALSE)
+    write.csv(invMeanTrend, file = file.path(pathProSpe, paste0("RORC_Inv_Station_Trends_States_hdbn.csv")), row.names = FALSE)
   
   
     
 # some plots for presentations
     # Read general thresholds
-    coralMean <- coralRorcMean
-    coralSD <- coralRorcSD
-    coralStates <- read.csv(file.path(pathPro,"RORC_Coral_Station_General_States_hdbn.csv"))
+    # coralMean <- coralRorcMean
+    # coralSD <- coralRorcSD
+    # coralStates <- read.csv(file.path(pathProSpe,"RORC_Coral_Station_General_States_hdbn.csv"))
     
     
     

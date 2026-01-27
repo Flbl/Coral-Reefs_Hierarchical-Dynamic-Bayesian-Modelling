@@ -142,13 +142,13 @@ source("Scripts/00_Initialisation.R")
 
   # READ BIOLOGICAL DATA FOR STATION ASSIGNATION ----
   # Coral
-  coralRorc <- read.csv(file.path("Data", "Species","RORC_Coral_Data_hdbn.csv"))
+  coralRorc <- read.csv(file.path(pathSpe,"RORC_Coral_Data_hdbn.csv"))
 
   # Fish
-  fishRorc <- read.csv(file.path("Data", "Species","RORC_Fish_Data_hdbn.csv"))
+  fishRorc <- read.csv(file.path(pathSpe,"RORC_Fish_Data_hdbn.csv"))
 
   # Inv
-  invRorc <- read.csv(file.path("Data", "Species","RORC_Inv_Data_hdbn.csv"))
+  invRorc <- read.csv(file.path(pathSpe,"RORC_Inv_Data_hdbn.csv"))
 
   # Create common station df
   stationsRorc <- st_as_sf(
@@ -947,11 +947,85 @@ source("Scripts/00_Initialisation.R")
     dir.create(file.path(pathDat, "01_Processed","Environment","Gravity"), showWarnings = FALSE)
     write.csv(gravStates, file.path(pathDat, "01_Processed","Environment","Gravity","Env_Gravity_Station_States_New_Caledonia.csv"), row.names = FALSE)
     
+    # eo gravity ----
     
+  # GEOMORPHOLOGY ----
+    # Create common station df with geomorpho and thats all
+    geomorphoRorc <- merge(
+        merge(
+          coralRorc[!is.na(coralRorc$Lon),] %>% distinct(Site, Station, Geomorpho),
+          fishRorc[!is.na(fishRorc$Lon),] %>% distinct(Site, Station, Geomorpho),
+          all = TRUE),
+        invRorc[!is.na(invRorc$Lon),] %>% distinct(Site, Station, Geomorpho),
+        all = TRUE)
+      
+    # Save
+    dir.create(file.path(pathProEnv,"Geomorphology"), showWarnings = FALSE)
+    write.csv(geomorphoRorc, file.path(pathProEnv,"Geomorphology","Env_Geomorphology_Station_States_New_Caledonia.csv"), row.names = FALSE)
     
+    # eo geomorphology ----
   
     
-    # COTS OUTBREAKS ----
+    
+  # MPA  ----
+    # no entry/no take /None
+    # Read MPA SIG
+    # PN
+    pnMPA <- st_read(file.path(pathEnv, "MPA","aires-protegees-en-province-nord","aires-protegees-en-province-nord.shp"))
+    pnMPA <- pnMPA[pnMPA$type_de_zon == "Zone maritime",]
+    pnMPA <- pnMPA[-grep("Important Bird Area",pnMPA$statut),]
+    pnMPA <- pnMPA[,c("statut","objectid","nom")]
+    colnames(pnMPA) <- c("state","id","name", "geometry")
+    pnMPA$state <- "1"
+    
+    # PS
+    psMPA <- st_read(file.path(pathEnv, "MPA","aires-protegees-en-province-sud","aires-protegees-en-province-sud.shp"))
+    psMPA <- psMPA[,c("id","libelle","ouvert")]
+    # Remove "Parcs" as they have no real enforcement
+    psMPA <- psMPA[-grep("Parc",psMPA$libelle),]
+    colnames(psMPA) <- c("id","name","state","geometry")
+    
+    # StationRorc
+    mpaRorc <- st_join(
+        stationsRorc,
+        psMPA,
+        join = st_intersects,
+        left = TRUE
+      )
+    
+    if(any(duplicated(mpaRorc$Station))) {
+      mpaRorc <- mpaRorc %>%
+        group_by(Station) %>%
+        slice_min(order_by = state, n = 1, with_ties = FALSE) %>%
+        ungroup()
+    }
+    
+    mpaRorc <- st_join(
+      mpaRorc,
+      pnMPA,
+      join = st_intersects,
+      left = TRUE
+    )
+    
+    mpaRorc <- mpaRorc %>%
+      mutate(
+        id    = coalesce(id.x, id.y),
+        name  = coalesce(name.x, name.y),
+        state = coalesce(state.x, state.y)
+      ) %>%
+      select(-id.x, -id.y, -name.x, -name.y, -state.x, -state.y)
+    
+    mpaRorc$state <- ifelse(is.na(mpaRorc$state), "No_MPA","MPA")
+    
+    # Save
+    dir.create(file.path(pathProEnv, "MPA"), showWarnings = FALSE)
+    write.csv(mpaRorc, file.path(pathProEnv,"MPA","Env_MPA_Station_States_New_Caledonia.csv"), row.names = FALSE)
+    
+    # eo MPA 
+    
+    
+    
+  # COTS OUTBREAKS ----
     # ACA > 100/ha = outbreak
     # See Dumas et al. 2020
     # So by conversion to 20*5 = 100sqm, then cots >= 1 ==> outbreak) Not good.
