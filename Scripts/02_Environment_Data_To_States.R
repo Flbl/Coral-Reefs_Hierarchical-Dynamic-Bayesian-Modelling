@@ -183,16 +183,16 @@ source("Scripts/00_Initialisation.R")
                       State = c(
                         "Neutral",
                         "Neutral",
-                        "El Nino",
-                        "El Nino",
-                        "El Nina",
-                        "El Nino",
-                        "El Nino",
-                        "El Nina",
-                        "El Nina",
-                        "El Nina",
-                        "El Nino",
-                        "El Nino"
+                        "Nino",
+                        "Nino",
+                        "Nina",
+                        "Nino",
+                        "Nino",
+                        "Nina",
+                        "Nina",
+                        "Nina",
+                        "Nino",
+                        "Nino"
                       ))
   
   ninoa
@@ -343,21 +343,21 @@ source("Scripts/00_Initialisation.R")
         SST_regime_state = case_when(
           
           # --- VERY COOL REGIME ---
-          anomaly < q10 & anomaly <= -delta ~ "Very cool regime",
+          anomaly < q10 & anomaly <= -delta ~ "Very_Cool_Regime",
           
           # --- SLIGHTLY COOL REGIME ---
-          anomaly >= q10 & anomaly < q30 ~ "Slightly cool regime",
-          anomaly < q10 & abs(anomaly) < delta ~ "Slightly cool regime",
+          anomaly >= q10 & anomaly < q30 ~ "Slightly_Cool_Regime",
+          anomaly < q10 & abs(anomaly) < delta ~ "Slightly_Cool_Regime",
           
           # --- USUAL REGIME ---
-          anomaly >= q30 & anomaly <= q70 & abs(anomaly) < delta ~ "Usual regime",
+          anomaly >= q30 & anomaly <= q70 & abs(anomaly) < delta ~ "Usual_Regime",
           
           # --- SLIGHTLY WARM REGIME ---
-          anomaly > q70 & anomaly <= q90 ~ "Slightly warm regime",
-          anomaly > q90 & anomaly < delta ~ "Slightly warm regime",
+          anomaly > q70 & anomaly <= q90 ~ "Slightly_Warm_Regime",
+          anomaly > q90 & anomaly < delta ~ "Slightly_Warm_Regime",
           
           # --- VERY WARM REGIME ---
-          anomaly > q90 & anomaly >= delta ~ "Very warm regime",
+          anomaly > q90 & anomaly >= delta ~ "Very_Warm_Regime",
           
           TRUE ~ NA_character_
         )
@@ -577,21 +577,21 @@ source("Scripts/00_Initialisation.R")
         CHL_regime_state = case_when(
           
           # --- VERY low REGIME ---
-          anomaly < q10 & anomaly <= -delta ~ "Very low regime",
+          anomaly < q10 & anomaly <= -delta ~ "Very_Low_Regime",
           
           # --- SLIGHTLY low REGIME ---
-          anomaly >= q10 & anomaly < q30 ~ "Slightly low regime",
-          anomaly < q10 & abs(anomaly) < delta ~ "Slightly low regime",
+          anomaly >= q10 & anomaly < q30 ~ "Slightly_Low_Regime",
+          anomaly < q10 & abs(anomaly) < delta ~ "Slightly_Low_Regime",
           
           # --- USUAL REGIME ---
-          anomaly >= q30 & anomaly <= q70 & abs(anomaly) < delta ~ "Usual regime",
+          anomaly >= q30 & anomaly <= q70 & abs(anomaly) < delta ~ "Usual_Regime",
           
           # --- SLIGHTLY high REGIME ---
-          anomaly > q70 & anomaly <= q90 ~ "Slightly high regime",
-          anomaly > q90 & anomaly < delta ~ "Slightly high regime",
+          anomaly > q70 & anomaly <= q90 ~ "Slightly_High_Regime",
+          anomaly > q90 & anomaly < delta ~ "Slightly_High_Regime",
           
           # --- VERY high REGIME ---
-          anomaly > q90 & anomaly >= delta ~ "Very high regime",
+          anomaly > q90 & anomaly >= delta ~ "Very_High_Regime",
           
           TRUE ~ NA_character_
         )
@@ -713,9 +713,9 @@ source("Scripts/00_Initialisation.R")
     baa_station_year <- baa_station_year%>%
       mutate(
         State = case_when(
-          annual_max_BAA %in% c(0:2) ~ "No alert",
-          annual_max_BAA %in% c(3:4) ~ "Bleaching alert",
-          annual_max_BAA %in% c(5:7) ~ "Mortality alert",
+          annual_max_BAA %in% c(0:2) ~ "No_Alert",
+          annual_max_BAA %in% c(3:4) ~ "Bleaching_Alert",
+          annual_max_BAA %in% c(5:7) ~ "Mortality_Alert",
           TRUE ~ NA_character_
         )
       )
@@ -775,9 +775,9 @@ source("Scripts/00_Initialisation.R")
     cycCount <- cycCount%>%
       mutate(
       State = case_when(
-        CYCLONE %in% c(0) ~ "No Storm",
-        CYCLONE %in% c(1:4) ~ "Moderate Storm Season",
-        CYCLONE >= 5 ~ "Intense Storm Season",
+        CYCLONE %in% c(0) ~ "No_Storm",
+        CYCLONE %in% c(1:4) ~ "Moderate_Storm_Season",
+        CYCLONE >= 5 ~ "Intense_Storm_Season",
         TRUE ~ NA_character_
         )
       )
@@ -901,9 +901,9 @@ source("Scripts/00_Initialisation.R")
     cyclone_R34_States <- cyclone_R34_counts %>%
       mutate(
         States = case_when(
-          n_cyclones == 0 ~ "No Storm",
-          n_cyclones == 1 ~ "1 Heavy Storm",
-          n_cyclones >= 2 ~ "Multiple Heavy Storms",
+          n_cyclones == 0 ~ "No_Storm",
+          n_cyclones == 1 ~ "Single_Heavy_Storm",
+          n_cyclones >= 2 ~ "Multiple_Heavy_Storms",
           TRUE ~ NA_character_
         )
       )
@@ -940,7 +940,7 @@ source("Scripts/00_Initialisation.R")
         States = case_when(
           Gravity < qt[1] ~ "Low",
           Gravity >= qt[1] & Gravity < qt[2] ~ "Moderate",
-          Gravity > qt[2] ~ "High"
+          Gravity >= qt[2] ~ "High"
         )
       )
     
@@ -1016,6 +1016,8 @@ source("Scripts/00_Initialisation.R")
       select(-id.x, -id.y, -name.x, -name.y, -state.x, -state.y)
     
     mpaRorc$state <- ifelse(is.na(mpaRorc$state), "No_MPA","MPA")
+    mpaRorc <- st_drop_geometry(mpaRorc)
+    
     
     # Save
     dir.create(file.path(pathProEnv, "MPA"), showWarnings = FALSE)
@@ -1050,7 +1052,7 @@ source("Scripts/00_Initialisation.R")
     cots <- cots %>% 
       mutate(
         States = case_when(
-          Cots < Threshold ~ "No Outbreak",
+          Cots < Threshold ~ "No_Outbreak",
           Cots >= Threshold ~ "Outbreak"
         
       ))
