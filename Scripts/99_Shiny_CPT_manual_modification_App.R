@@ -385,6 +385,7 @@ run_cpt_app <- function(pathProCpt,
     })
     
     
+    
     # ---- Monotone UI: weights + scores (only when CPT has parents)
     output$mono_weights_ui <- renderUI({
       req(cpt())
@@ -998,22 +999,27 @@ run_cpt_app <- function(pathProCpt,
       req(cpt())
       df <- cpt()
       
+      # columns to round
       sc <- state_cols()
       prob_names <- character(0)
-      if (cpt_type() == "with_parents" && length(sc) > 0) {
-        prob_names <- names(df)[sc]
-      }
-      if (cpt_type() == "no_parents" && "Probability" %in% names(df)) {
-        prob_names <- "Probability"
+      if (cpt_type() == "with_parents" && length(sc) > 0) prob_names <- names(df)[sc]
+      if (cpt_type() == "no_parents" && "Probability" %in% names(df)) prob_names <- "Probability"
+      
+      # make a rounded DISPLAY copy (doesn't touch your cpt())
+      df_show <- df
+      if (length(prob_names) > 0) {
+        df_show[, prob_names] <- round(df_show[, prob_names], 2)
       }
       
+      active <- current_row()  # << this is the key
+      
       dt <- datatable(
-        df,
+        df_show,
         selection = "none",
         options = list(
           pageLength = 100,
           
-          # dblclick -> send row index to Shiny (1-based)
+          # dblclick row -> send row to Shiny
           rowCallback = JS("
         function(row, data, index) {
           $(row).off('dblclick');
@@ -1023,44 +1029,25 @@ run_cpt_app <- function(pathProCpt,
         }
       "),
           
-          # store active row in JS (updated via custom message)
-          initComplete = JS("
-        function(settings, json) {
-          window._activeRow = 1; // default
-          Shiny.addCustomMessageHandler('activeRow', function(msg) {
-            window._activeRow = msg.row;
-            var api = new $.fn.dataTable.Api(settings);
-            api.rows().invalidate().draw(false);
-          });
-        }
-      "),
-          
-          # apply highlight class on every draw
-          drawCallback = JS("
+          # highlight active row; embed active row value from R
+          drawCallback = JS(sprintf("
         function(settings) {
           var api = new $.fn.dataTable.Api(settings);
-          var active = window._activeRow || 1;
+          var active = %d;
 
           api.rows().every(function(rowIdx) {
             var tr = this.node();
-            if ((rowIdx + 1) === active) {
-              $(tr).addClass('active-row');
-            } else {
-              $(tr).removeClass('active-row');
-            }
+            if ((rowIdx + 1) === active) $(tr).addClass('active-row');
+            else $(tr).removeClass('active-row');
           });
         }
-      ")
+      ", active))
         )
       )
       
-      # Restore rounding (2 decimals) for probability columns
-      if (length(prob_names) > 0) {
-        dt <- DT::formatRound(dt, columns = prob_names, digits = 2)
-      }
-      
       dt
     })
+    
     
     # ---- Save ----
     observeEvent(input$save, {
