@@ -8,8 +8,9 @@
 
 
 # Read the template HDBN generated from GeNIE
-# Try EM learning with biological and environmental data state tables
-# Template nodes can be given "learning tables" with rows representing one case of observed evidence 
+# Reading all observed data and concatenating them into one single "Evidence" dataframe
+# Ensure name synchronisation between network and evidence states
+# Save the evidence
 
 # INIT -----
 
@@ -78,11 +79,11 @@
   # Read all data and remap all colnames to fit the hdbn node ids
   # Cross names index for OBS
   crossNames <- c(
-    Year = "year",
-    Year = "SEASON",
-    Year = "Campagne",
-    Station = "station",
-    Site = "site",
+    # Year = "year",
+    # Year = "SEASON",
+    # Year = "Campagne",
+    # Station = "station",
+    # Site = "site",
     
     Branching_Coral_Cover_Station_OBS = "RorcHCB",
     Massive_Coral_Cover_Station_OBS = "RorcHCM",
@@ -106,7 +107,7 @@
     Sea_Urchins_Abundance_Station_OBS = "RorcUrchinAbund"
   )
   
-  # For trend
+  # Same object for trend
   crossNames_trend <- crossNames
   names(crossNames_trend) <- sub("_OBS$", "_TREND", names(crossNames_trend))
   
@@ -159,7 +160,7 @@
     
     # Geomorphology
     geo <- read.csv(file.path(pathProEnv,"Geomorphology","Env_Geomorphology_Station_States_New_Caledonia.csv"))
-    colnames(geo)[grep("State|state|Geo",colnames(geo))] <- "Env_Geomorphology"
+    colnames(geo)[grep("State|state",colnames(geo))] <- "Env_Geomorphology"
     geo <- keep_evidence_cols(geo)
     head(geo)
     
@@ -171,7 +172,7 @@
     
     # Gravity
     grav <- read.csv(file.path(pathProEnv,"Gravity","Env_Gravity_Station_States_New_Caledonia.csv"))
-    colnames(grav)[grep("State|state|States|states",colnames(grav))] <- "Env_Gravity"
+    colnames(grav)[grep("State|state",colnames(grav))] <- "Env_Gravity"
     grav <- keep_evidence_cols(grav)
     head(grav)
     
@@ -179,7 +180,7 @@
     cyc <- read.csv(file.path(pathProEnv,"Cyclones","Env_Cyclone_Frequency_General_States_New_Caledonia.csv"))
     cyc <- cyc %>%
       rename(any_of(crossNames_trend))
-    colnames(cyc)[grep("State|state|States|states",colnames(cyc))] <- "Env_Cyclone_Frequency_General"
+    colnames(cyc)[grep("State|state",colnames(cyc))] <- "Env_Cyclone_Frequency_General"
     cyc <- keep_evidence_cols(cyc)
     head(cyc)
     
@@ -187,7 +188,7 @@
     temp <- read.csv(file.path(pathProEnv,"Temperature","RORC_Env_Temperature_Regime_Site_States_hdbn.csv"))
     temp <- temp %>%
       rename(any_of(crossNames_trend))
-    colnames(temp)[grep("State|state|States|states",colnames(temp))] <- "Env_Site_Temperature_Regime"
+    colnames(temp)[grep("State|state",colnames(temp))] <- "Env_Site_Temperature_Regime"
     temp <- keep_evidence_cols(temp)
     head(temp) 
     
@@ -195,7 +196,7 @@
     chla <- read.csv(file.path(pathProEnv,"Chlorophyll_a","RORC_Env_Chlorophyll-a_Regime_Site_States_hdbn.csv"))
     chla <- chla %>%
       rename(any_of(crossNames_trend))
-    colnames(chla)[grep("State|state|States|states",colnames(chla))] <- "Env_Site_Chlorophyll_a_Regime"
+    colnames(chla)[grep("State|state",colnames(chla))] <- "Env_Site_Chlorophyll_a_Regime"
     chla <- keep_evidence_cols(chla)
     head(chla)
     
@@ -203,7 +204,7 @@
     baa <- read.csv(file.path(pathProEnv,"Heatwaves_BAA","Env_Bleaching_Alert_Area_Station_States_New_Caledonia.csv"))
     baa <- baa %>%
       rename(any_of(crossNames_trend))
-    colnames(baa)[grep("State|state|States|states",colnames(baa))] <- "Env_Bleaching_Alert_Area"
+    colnames(baa)[grep("State|state",colnames(baa))] <- "Env_Bleaching_Alert_Area"
     baa <- keep_evidence_cols(baa)
     head(baa)
     
@@ -211,7 +212,7 @@
     cyc34 <- read.csv(file.path(pathProEnv,"Cyclones","Env_Cyclone_R34_Station_States_2013_2025_New_Caledonia.csv"))
     cyc34 <- cyc34 %>%
       rename(any_of(crossNames_trend))
-    colnames(cyc34)[grep("State|state|States|states",colnames(cyc34))] <- "Env_Cyclone_R34"
+    colnames(cyc34)[grep("State|state",colnames(cyc34))] <- "Env_Cyclone_R34"
     cyc34 <- keep_evidence_cols(cyc34)
     head(cyc34)
     
@@ -219,13 +220,13 @@
     cots <- read.csv(file.path(pathProEnv,"COTS","Env_COTS_Outbreaks_Station_States_New_Caledonia.csv"))
     cots <- cots %>%
       rename(any_of(crossNames_trend))
-    colnames(cots)[grep("State|state|States|states",colnames(cots))] <- "Env_COTS_Outbreak"
+    colnames(cots)[grep("State|state",colnames(cots))] <- "Env_COTS_Outbreak"
     cots <- keep_evidence_cols(cots)
     head(cots)
     
     
   # JOIN All datasets
-    
+  # Biological dataset merge
   bio <- coralG %>%
     full_join(coralT, by=c("Year","Site","Station")) %>%
     full_join(fishG,  by=c("Year","Site","Station")) %>%
@@ -233,10 +234,7 @@
     full_join(invG,   by=c("Year","Site","Station")) %>%
     full_join(invT,   by=c("Year","Site","Station"))
   
-  
-  
-  
-  
+  # Skeleton to ensure all merge at same rank (station)
   skeleton <- bio %>%
     select(Year, Site, Station) %>%
     distinct()
@@ -257,7 +255,7 @@
     left_join(bio,    by=c("Year","Site","Station"))
   
   
-  # Check for quality
+  # Checks for quality
   # Check duplicates
   stopifnot(nrow(master) == nrow(distinct(master, Year, Site, Station)))
   
@@ -277,8 +275,7 @@
     
   )
   
-  lapply(master, unique)
-  
+  # Function to check state levels between master and preconfigured network nodes
   check_levels <- function(df, node) {
     lev <- sort(unique(na.omit(df[[node]])))
     net_lev <- net$getOutcomeIds(node)
@@ -293,9 +290,8 @@
   lapply(colnames(master)[-c(1:3)], check_levels, df = master)
   
   
-  
-# TRAIN WITH EM ----
-  
+# SAVE EVIDENCE ----
+  # Saving dataset of evidence to train EM later
   # Keep only columns that are node IDs (and optionally keep Year/Site/Station if you want, but they won't match)
   evid <- master %>%
     select(any_of(nodes))  # strict: only network nodes
@@ -304,69 +300,11 @@
   evid <- evid %>%
     mutate(across(everything(), ~ if (is.factor(.x)) as.character(.x) else .x))
   
-  # Optional: convert "" to NA
+  # convert "" to NA to ensure all is NA
   evid[evid == ""] <- NA
   
-  # Save so the SMILE api can read the file (NA are converted to "" for SMILE)
+  # Save so the SMILE api can read the file (And use na = "" to convert all NA to "" for SMILE API)
   write.csv(evid, file.path(pathPro,"Hdbn_Evidence_Full.csv"), na = "", row.names = FALSE)
   
-  ds <- DataSet()
-  ds$readFile(file.path(pathPro,"Hdbn_Evidence_Full.csv"))
-  
-  matching <- ds$matchNetwork(net)
-  
-  # Quick sanity: count matches
-  length(matching)
-  
-  
-  fixedIds <- c(
-    # exogenous/environment
-    "Env_Cyclone_Frequency_General",
-    "Env_Nino_Phase_General",
-    "Env_Site_Temperature_Regime",
-    "Env_Site_Chlorophyll_a_Regime",
-    "Env_Site_Conditions",
-    "Env_Bleaching_Alert_Area",
-    "Env_Cyclone_R34",
-    "Env_COTS_Outbreak",
-    "Env_Geomorphology",
-    "Env_MPA",
-    "Env_Gravity",
-    
-    # engineered / deterministic-ish
-    "Cyclone_Impact",
-    "Env_Environmental_Shock",
-    "Acute_Local_Pressure",
-    "Phase_Shift_Window",
-    "Coral_Pressure_Index",
-    
-    # optional but recommended
-    "Intrinsic_Resilience"
-  )
-  
-  # Convert to handles (safer than passing strings in some builds)
-  fixedHandles <- vapply(fixedIds, net$getNode, integer(1))
-  
-  
-  em <- EM()
-  
-  # Keep original parameters (no uniformize, no randomize)
-  em$setUniformizeParameters(FALSE)
-  # em$setRandomizeParameters(FALSE)
-  em$setRandomizeParameters(TRUE)
-  
-  # Stabilize with ESS (start value; adjust if too stiff/too wiggly)
-  em$setEqSampleSize(0) #100
-  
-  # em$set_seed(111)
-  # Run learning
-  # em$learn(ds, net, matching, fixedNodes = fixedHandles)
-  em$learn(ds, net, matching)
-  
-  
-  getCPT(net, "Env_Site_Conditions")
-  test <- getCPT(net, "Fish_Biomass")
-  
-  test <- net$getNodeDefinition("Live_Coral_Cover")
   
   

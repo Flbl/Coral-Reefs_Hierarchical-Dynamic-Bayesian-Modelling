@@ -85,36 +85,51 @@ if(init1 == "02_Environment_Data_To_States.R") {
 }
 
 
-if(init1 == "03_HDBN_Template_EM.R") {
+if(init1 == "03_HDBN_Template_Evidence.R") {
   
-  
-  # Travel time
-  # This package will install pretty much all other needed packages for SIG processing
   if (!require("purrr")) install.packages("purrr")
-  
-  
-}
-
-if(init1 == "03_HDBN_Template.R") {
-  
-  
-  # Travel time
-  # This package will install pretty much all other needed packages for SIG processing
-  if (!require("purrr")) install.packages("purrr")
-
   
 }
 
 
-if(init1 == "04_Extract_CPT_Templates.R") {
-  
+if(init1 == "04_HDBN_Extract_CPT.R") {
   
   if (!require("purrr")) install.packages("purrr")
-
   
 }
 
 
+if(init1 == "05_HDBN_Fixed_Nodes.R") {
+  
+  if (!require("purrr")) install.packages("purrr")
+
+}
+
+
+if(init1 == "06_HDBN_EM_learning.R") {
+  
+  if (!require("purrr")) install.packages("purrr")
+
+}
+
+if(init1 == "07_HDBN_Fixed_EM_Eliciting.R") {
+  
+  if (!require("purrr")) install.packages("purrr")
+  
+}
+
+if(init1 == "08_HDBN_Test.R") {
+  
+  if (!require("purrr")) install.packages("purrr")
+  
+}
+
+
+if(init1 == "99_Shiny_CPT_manual_modification_App.R") {
+  
+  if (!require("purrr")) install.packages("purrr")
+  
+}
 
 
 # FUNCTIONS
