@@ -253,9 +253,9 @@ source("Scripts/00_Initialisation.R")
       vals <- terra::extract(r, vect(stations_sf), search_radius = 12000) #2 cell large~ 
       
       tibble(
-        site = stations_sf$Site,
-        station = stations_sf$Station,
-        year = year,
+        Site = stations_sf$Site,
+        Station = stations_sf$Station,
+        Year = year,
         annual_mean = vals[,2]
       )
     }
@@ -276,7 +276,7 @@ source("Scripts/00_Initialisation.R")
     
     # aggregate the station time series to site time series
     sst_site_year <- sst_station_year %>%
-      group_by(site, year) %>%
+      group_by(Site, Year) %>%
       summarise(
         annual_mean_SST = mean(annual_mean, na.rm = TRUE),
         .groups = "drop"
@@ -286,11 +286,11 @@ source("Scripts/00_Initialisation.R")
     # Now let's compute the 10 yearss prior baseline for each year for each site
     compute_baseline <- function(df) {
       df %>%
-        arrange(site, year) %>%
-        group_by(site) %>%
+        arrange(Site, Year) %>%
+        group_by(Site) %>%
         mutate(
           baseline_10yr =
-            sapply(seq_along(year), function(i) {
+            sapply(seq_along(Year), function(i) {
               # years strictly before current year
               past_vals <- annual_mean_SST[max(1, i-10):(i-1)]
               
@@ -326,7 +326,7 @@ source("Scripts/00_Initialisation.R")
     seq(0,1,1/(5))
     
     quantiles_site <- sst_site_year %>%
-      group_by(site) %>%
+      group_by(Site) %>%
       summarise(
         q10 = quantile(anomaly, 0.1, na.rm = TRUE),
         q30 = quantile(anomaly, 0.3, na.rm = TRUE),
@@ -338,7 +338,7 @@ source("Scripts/00_Initialisation.R")
     # And finally getting the states for the temperature data for each site:
     # join quantiles and classify with hybrid rule
     sst_site_year <- sst_site_year %>%
-      left_join(quantiles_site, by = "site") %>%
+      left_join(quantiles_site, by = "Site") %>%
       mutate(
         SST_regime_state = case_when(
           
@@ -363,7 +363,7 @@ source("Scripts/00_Initialisation.R")
         )
       )
     
-    sst_site_year_states <- sst_site_year[sst_site_year$year >2012,]
+    sst_site_year_states <- sst_site_year[sst_site_year$Year >2012,]
     
     dir.create(file.path(pathDat, "01_Processed","Environment","Temperature"), showWarnings = FALSE)
 
@@ -483,9 +483,9 @@ source("Scripts/00_Initialisation.R")
       })
       
       tibble::tibble(
-        site     = stations_sf$Site,
-        station = stations_sf$Station,
-        year     = as.integer(year),
+        Site     = stations_sf$Site,
+        Station = stations_sf$Station,
+        Year     = as.integer(year),
         chl_top3_log = top3_mean
       )
     }
@@ -512,7 +512,7 @@ source("Scripts/00_Initialisation.R")
     
     # aggregate the station time series to site time series
     chl_site_year <- chl_station_year %>%
-      group_by(site, year) %>%
+      group_by(Site, Year) %>%
       summarise(
         chl_top3_log = mean(chl_top3_log, na.rm = TRUE),
         .groups = "drop"
@@ -522,11 +522,11 @@ source("Scripts/00_Initialisation.R")
     # Now let's compute the 10 yearss prior baseline for each year for each site
     compute_baseline <- function(df) {
       df %>%
-        arrange(site, year) %>%
-        group_by(site) %>%
+        arrange(Site, Year) %>%
+        group_by(Site) %>%
         mutate(
           baseline_10yr =
-            sapply(seq_along(year), function(i) {
+            sapply(seq_along(Year), function(i) {
               # years strictly before current year
               past_vals <- chl_top3_log[max(1, i-10):(i-1)]
               
@@ -560,7 +560,7 @@ source("Scripts/00_Initialisation.R")
     seq(0,1,1/(5))
     
     quantiles_site <- chl_site_year %>%
-      group_by(site) %>%
+      group_by(Site) %>%
       summarise(
         q10 = quantile(anomaly, 0.1, na.rm = TRUE),
         q30 = quantile(anomaly, 0.3, na.rm = TRUE),
@@ -572,7 +572,7 @@ source("Scripts/00_Initialisation.R")
     # And finally getting the states for the temperature data for each site:
     # join quantiles and classify with hybrid rule
     chl_site_year <- chl_site_year %>%
-      left_join(quantiles_site, by = "site") %>%
+      left_join(quantiles_site, by = "Site") %>%
       mutate(
         CHL_regime_state = case_when(
           
@@ -597,7 +597,7 @@ source("Scripts/00_Initialisation.R")
         )
       )
     
-    chl_site_year_states <- chl_site_year[chl_site_year$year >2012,]
+    chl_site_year_states <- chl_site_year[chl_site_year$Year >2012,]
     
     dir.create(file.path(pathDat, "01_Processed","Environment","Chlorophyll_a"), showWarnings = FALSE)
     write.csv(chl_site_year_states, file = file.path(pathDat, "01_Processed","Environment","Chlorophyll_a","RORC_Env_Chlorophyll-a_Regime_Site_States_hdbn.csv"), row.names = FALSE)
@@ -691,9 +691,9 @@ source("Scripts/00_Initialisation.R")
       
 
       tibble(
-        site = stations_sf$Site,
-        station = stations_sf$Station,
-        year = year,
+        Site = stations_sf$Site,
+        Station = stations_sf$Station,
+        Year = year,
         annual_max_BAA = maxBaa
       )
     }
@@ -751,13 +751,13 @@ source("Scripts/00_Initialisation.R")
     # cycNc <- cyc[st_intersects(cyc, ncBboxSf, sparse = FALSE), ]
     # # plot(st_geometry(cycNc))
     # 
-    # st_write(cycNc, dsn = file.path(pathDat, "01_Processed","Environment","Cyclones"), layer = "Cyclones_New_Caledonia_IBTrACS.shp", driver = "ESRI Shapefile", append = FALSE) 
+    # st_write(cycNc, dsn = file.path(pathDat, "01_Processed","Environment","Cyclones"), layer = "Cyclones_New_Caledonia_IBTrACS.shp", driver = "ESRI Shapefile", append = FALSE)
     # ---
     
     cyc <- st_read(file.path(pathDat, "01_Processed","Environment","Cyclones","Cyclones_New_Caledonia_IBTrACS.shp"))
     
     # Filtering cyclones within boundaries and between 2013 and 2024
-    cyc <- cyc[cyc$year >= 2013,]
+    cyc <- cyc[cyc$SEASON >= 2013,]
     # st_crs(cyc)
     
     
@@ -782,6 +782,10 @@ source("Scripts/00_Initialisation.R")
         )
       )
         
+    # Rename to get common naming system
+    cycCount <- cycCount %>%
+      rename(Year = SEASON)
+    
     # Save !
     write.csv(cycCount, file.path(pathDat, "01_Processed","Environment","Cyclones","Env_Cyclone_Frequency_General_States_New_Caledonia.csv"), row.names = FALSE)
     
@@ -856,6 +860,7 @@ source("Scripts/00_Initialisation.R")
       
     # plot(st_geometry(storm_polygons[c(1:2),]), add = TRUE)
     
+    
     # SAVE
     dir.create(file.path(pathDat, "01_Processed","Environment","Cyclones"), showWarnings = FALSE)
     st_write(storm_polygons, dsn = file.path(pathDat, "01_Processed","Environment","Cyclones"), layer = "Cyclones_SP_R34_Influence_2013-2025.shp", driver = "ESRI Shapefile", append = FALSE) 
@@ -908,6 +913,9 @@ source("Scripts/00_Initialisation.R")
         )
       )
     
+    cyclone_R34_States <- cyclone_R34_States %>%
+      rename(Year = SEASON)
+    
     # WRITE THE STATES !
     write.csv(cyclone_R34_States, file.path(pathDat, "01_Processed","Environment","Cyclones","Env_Cyclone_R34_Station_States_2013_2025_New_Caledonia.csv"), row.names = FALSE)
     
@@ -959,6 +967,9 @@ source("Scripts/00_Initialisation.R")
         invRorc[!is.na(invRorc$Lon),] %>% distinct(Site, Station, Geomorpho),
         all = TRUE)
       
+    geomorphoRorc <- geomorphoRorc %>%
+      rename(State = Geomorpho)
+    
     # Save
     dir.create(file.path(pathProEnv,"Geomorphology"), showWarnings = FALSE)
     write.csv(geomorphoRorc, file.path(pathProEnv,"Geomorphology","Env_Geomorphology_Station_States_New_Caledonia.csv"), row.names = FALSE)
@@ -975,15 +986,15 @@ source("Scripts/00_Initialisation.R")
     pnMPA <- pnMPA[pnMPA$type_de_zon == "Zone maritime",]
     pnMPA <- pnMPA[-grep("Important Bird Area",pnMPA$statut),]
     pnMPA <- pnMPA[,c("statut","objectid","nom")]
-    colnames(pnMPA) <- c("state","id","name", "geometry")
-    pnMPA$state <- "1"
+    colnames(pnMPA) <- c("State","id","name", "geometry")
+    pnMPA$State <- "1"
     
     # PS
     psMPA <- st_read(file.path(pathEnv, "MPA","aires-protegees-en-province-sud","aires-protegees-en-province-sud.shp"))
     psMPA <- psMPA[,c("id","libelle","ouvert")]
     # Remove "Parcs" as they have no real enforcement
     psMPA <- psMPA[-grep("Parc",psMPA$libelle),]
-    colnames(psMPA) <- c("id","name","state","geometry")
+    colnames(psMPA) <- c("id","name","State","geometry")
     
     # StationRorc
     mpaRorc <- st_join(
@@ -996,7 +1007,7 @@ source("Scripts/00_Initialisation.R")
     if(any(duplicated(mpaRorc$Station))) {
       mpaRorc <- mpaRorc %>%
         group_by(Station) %>%
-        slice_min(order_by = state, n = 1, with_ties = FALSE) %>%
+        slice_min(order_by = State, n = 1, with_ties = FALSE) %>%
         ungroup()
     }
     
@@ -1011,11 +1022,11 @@ source("Scripts/00_Initialisation.R")
       mutate(
         id    = coalesce(id.x, id.y),
         name  = coalesce(name.x, name.y),
-        state = coalesce(state.x, state.y)
+        State = coalesce(State.x, State.y)
       ) %>%
-      select(-id.x, -id.y, -name.x, -name.y, -state.x, -state.y)
+      select(-id.x, -id.y, -name.x, -name.y, -State.x, -State.y)
     
-    mpaRorc$state <- ifelse(is.na(mpaRorc$state), "No_MPA","MPA")
+    mpaRorc$State <- ifelse(is.na(mpaRorc$State), "No_MPA","MPA")
     mpaRorc <- st_drop_geometry(mpaRorc)
     
     
@@ -1056,6 +1067,9 @@ source("Scripts/00_Initialisation.R")
           Cots >= Threshold ~ "Outbreak"
         
       ))
+    
+    cots <- cots %>% 
+      rename(Year = Campagne)
     
     # WRITE STATES !
     dir.create(file.path(pathDat, "01_Processed","Environment","COTS"), showWarnings = FALSE)
