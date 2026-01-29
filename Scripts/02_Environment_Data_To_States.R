@@ -905,7 +905,7 @@ source("Scripts/00_Initialisation.R")
     
     cyclone_R34_States <- cyclone_R34_counts %>%
       mutate(
-        States = case_when(
+        State = case_when(
           n_cyclones == 0 ~ "No_Storm",
           n_cyclones == 1 ~ "Single_Heavy_Storm",
           n_cyclones >= 2 ~ "Multiple_Heavy_Storms",
@@ -926,7 +926,7 @@ source("Scripts/00_Initialisation.R")
     # (severly, mild, none)
     pathGrav <- file.path(pathEnv, "Gravity")
     grav <- rast(file.path(pathEnv, "Gravity","Human_Gravity_NewCaledonia_2019.tif"))
-    plot(grav)
+    # plot(grav)
     # Transform to epsg84
     stationsRorc_lambert <- st_transform(stationsRorc, st_crs(grav))
     
@@ -945,7 +945,7 @@ source("Scripts/00_Initialisation.R")
     
     gravStates <- gravStates %>%
       mutate(
-        States = case_when(
+        State = case_when(
           Gravity < qt[1] ~ "Low",
           Gravity >= qt[1] & Gravity < qt[2] ~ "Moderate",
           Gravity >= qt[2] ~ "High"
@@ -1062,7 +1062,7 @@ source("Scripts/00_Initialisation.R")
     # State
     cots <- cots %>% 
       mutate(
-        States = case_when(
+        State = case_when(
           Cots < Threshold ~ "No_Outbreak",
           Cots >= Threshold ~ "Outbreak"
         
