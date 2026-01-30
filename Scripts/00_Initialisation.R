@@ -150,81 +150,165 @@ safe_Mclust <- function(x, ...) {
 
 
 
-# Function to get CPT in dataframe from a graph network from the rSMILE package
-getCPT <- function(net, node, temporal_order = c(1,2)) {
-  
-  states <- net$getOutcomeIds(node)
-  n_states <- length(states)
-  
-  # parents in the same time slice
-  parents_now <- net$getParents(node)
-  if (length(parents_now) > 0) {
-    names(parents_now) <- vapply(
-      parents_now,
-      net$getNodeId,
-      character(1)
-    )
+
+# Corrected function to get CPT in a datagrame from a graph network with temporal transitions
+# Extract DBN CPTs from an rSMILE Network for ALL temporal definitions of a node
+# Why this is needed:
+# In SMILE/GeNIe DBNs, a plate node with temporal arcs needs multiple CPT "definitions":
+#  - t = 0 uses net$getNodeDefinition(node)
+#  - t = k (k >= 1) uses net$getNodeTemporalDefinition(node, k)
+# The set of parents indexing each definition is different in early slices, so we must use
+# net$getUnrolledParents(node, k) to get the correct parent list for definition k.
+#
+# Plus: The order of CPT dimensions follows the order in which arcs to the node were created.
+# So we need to reconstruct the CPT table by iterating over the linear CPT vector in SMILE order,
+# Output:
+# A named list of data.frames:
+#   $t0, $t1, ..., and the last one labeled like "t2plus" (if max order is 2),
+# each with parent state columns + P_<outcome> columns.
+
+# For decoding each index into multi-dimensional coordinates, we use a helper function (given in the wrapper pdf)
+indexToCoords <- function(index, dimSizes) {
+  prod <- 1L
+  coords <- integer(length(dimSizes))
+  for (i in length(dimSizes):1) {
+    coords[i] <- floor(index / prod) %% dimSizes[[i]]
+    prod <- prod * dimSizes[[i]]
   }
-  
-  # --- Temporal parents (previous slices) ---
-  parents_temp <- list()
-  
-  for (lag in temporal_order) {
-    
-    # rSMILE throws an error if the node is not temporal
-    res <- tryCatch(
-      net$getTemporalParents(node, lag),
-      error = function(e) NULL
-    )
-    
-    if (is.null(res) || length(res) == 0) next
-    
-    # rSMILE can return multiple temporal parents for the same lag
-    for (r in res) {
-      parent_handle <- r$handle
-      parent_name   <- paste0(r$id, "_t-", r$order)
-      parents_temp[[parent_name]] <- parent_handle
-    }
-  }
-  
-  # merge all parents
-  parents <- c(parents_now, parents_temp)
-  
-  # --- No parents: simple prior ---
-  if (length(parents) == 0) {
-    probs <- net$getNodeDefinition(node)
-    return(
-      data.frame(
-        State = states,
-        Probability = probs,
-        row.names = NULL
-      )
-    )
-  }
-  
-  # list of outcomes for all parents
-  parent_states <- lapply(parents, function(p) net$getOutcomeIds(p))
-  
-  # build all combinations of parent states
-  parent_grid <- expand.grid(parent_states, KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE)
-  names(parent_grid) <- names(parents)
-  
-  # raw CPT definition from SMILE
-  raw <- net$getNodeDefinition(node)
-  
-  # --- Reshape CPT ---
-  cpt_matrix <- matrix(
-    raw,
-    ncol = n_states,
-    byrow = TRUE
-  )
-  
-  colnames(cpt_matrix) <- paste0("P_", states)
-  
-  cpt <- cbind(parent_grid, cpt_matrix)
-  
-  return(cpt)
+  coords
 }
+
+# Then we can make a function to get a temporal aware, ordered parent list 
+getParentsForDefinition <- function(net, node, k) {
+  
+  # Returns list(handles=..., labels=...) where labels encode temporal order
+  if (k == 0) {
+    info <- tryCatch(net$getUnrolledParents(node, 0), error=function(e) NULL)
+  } else {
+    info <- tryCatch(net$getUnrolledParents(node, k), error=function(e) NULL)
+  }
+  
+  if (is.null(info)) {
+    if (k == 0) {
+      hs <- net$getParents(node)
+      labs <- vapply(hs, net$getNodeId, character(1))
+      return(list(handles = hs, labels = labs))
+    }
+    stop("getUnrolledParents failed for node=", node, " k=", k)
+  }
+  
+  handles <- vapply(info, function(x) as.integer(x$handle), integer(1))
+  labels  <- vapply(info, function(x) {
+    pid <- as.character(x$id)
+    ord <- as.integer(x$order)
+    if (ord == 0) pid else paste0(pid, "_t-", ord)
+  }, character(1))
+  
+  # IMPORTANT: keep ordering exactly as returned; ensure uniqueness just in case
+  labels <- make.unique(labels)
+  
+  list(handles = handles, labels = labels)
+}
+
+# Helper function to get definition
+getDefinitionByK <- function(net, node, k) {
+  if (k == 0) {
+    return(net$getNodeDefinition(node))
+  }
+  # k >= 1
+  return(net$getNodeTemporalDefinition(node, k))
+}
+
+# And the function to extract for one temporal definition 
+getCPT_one_definition <- function(net, node, k = 0) {
+  
+  # Parents in the exact order SMILE reports for this temporal definition
+  par <- getParentsForDefinition(net, node, k)
+  parent_handles <- par$handles
+  parent_labels  <- par$labels
+  
+  child_states <- net$getOutcomeIds(node)
+  n_child <- length(child_states)
+  
+  raw <- getDefinitionByK(net, node, k)
+  
+  parent_sizes <- if (length(parent_handles) > 0) {
+    vapply(parent_handles, net$getOutcomeCount, integer(1))
+  } else integer(0)
+  
+  dimSizes <- c(parent_sizes, n_child)
+  expected_len <- prod(dimSizes)
+  
+  if (length(raw) != expected_len) {
+    stop(
+      "Definition length mismatch for node=", node, " k=", k,
+      " expected=", expected_len, " got=", length(raw),
+      " (parent sizes: ", paste(parent_sizes, collapse="x"),
+      ", child=", n_child, ")"
+    )
+  }
+  
+  # Number of parent configurations (each has n_child probs)
+  n_parent_configs <- if (length(parent_sizes) > 0) prod(parent_sizes) else 1L
+  
+  parent_rows <- vector("list", n_parent_configs)
+  prob_mat <- matrix(NA_real_, nrow = n_parent_configs, ncol = n_child)
+  
+  for (pc in seq_len(n_parent_configs)) {
+    # pc = 1 
+      
+    base_idx0 <- (pc - 1L) * n_child  # 0-based start index for this parent config block
+    coords <- indexToCoords(base_idx0, dimSizes)
+    
+    if (length(parent_handles) > 0) {
+      parent_state_ids <- vapply(seq_along(parent_handles), function(j) {
+        net$getOutcomeId(parent_handles[j], coords[j])
+      }, character(1))
+      names(parent_state_ids) <- parent_labels
+      parent_rows[[pc]] <- as.list(parent_state_ids)
+    } else {
+      parent_rows[[pc]] <- list()
+    }
+    
+    prob_mat[pc, ] <- raw[(base_idx0 + 1L):(base_idx0 + n_child)]
+  }
+  
+  parent_df <- if (length(parent_labels) > 0) {
+    as.data.frame(do.call(rbind, lapply(parent_rows, as.data.frame)), stringsAsFactors = FALSE)
+  } else {
+    # IMPORTANT: 1-row empty df so cbind() matches prob_mat rows
+    data.frame(row_id = 1, stringsAsFactors = FALSE)[, 0, drop = FALSE]
+  }
+  
+  colnames(prob_mat) <- paste0("P_", child_states)
+  
+  cbind(parent_df, as.data.frame(prob_mat, check.names = FALSE))
+}
+
+# And the final wrapper:
+getCPT <- function(net, node, max_k = 2) {
+  out <- list()
+  
+  for (k in 0:max_k) {
+    res <- tryCatch(
+      getCPT_one_definition(net, node, k = k),
+      error = function(e) e
+    )
+    
+    if (inherits(res, "error")) {
+      # k==0 should never fail; if it does, propagate
+      if (k == 0) stop(res)
+      
+      # for k>0: stop at first missing temporal definition
+      break
+    }
+    
+    out[[paste0("t", k)]] <- res
+  }
+  
+  out
+}
+
 
 
 # Function to create CPT node :
@@ -277,10 +361,13 @@ createTemplateCptNode <- function(net, id, name, outcomes, xPos = NULL, yPos = N
 #     temporal = net$getNodeTemporalType(archetype)
 #   )
 # }
-archetype = "Structural_Complexity"
-archetype = "Branching_Coral_Cover_Station_TREND_XX"
-archetype = "Fish_Diversity"
-temporal_order = c(1, 2)
+# archetype = "Structural_Complexity"
+# archetype = "Branching_Coral_Cover_Station_TREND_XX"
+# archetype = "Fish_Diversity"
+# temporal_order = c(1, 2)
+
+
+
 
 getNodeSpec <- function(net, archetype, temporal_order = c(1, 2)) {
   
@@ -403,6 +490,9 @@ ensureArc <- function(net, parent, child) {
     net$addArc(parent, child)
   }
 }
+
+
+
 
 
 # Coding directly in R a function that calls griddap and its OPeNDAP hyperslab protocol to request data off the NOAA ERDDAP data server
@@ -569,51 +659,199 @@ replot <- function(x) {
 
 
 # Trash
-# old getCPfunction
+# Function to get CPT in dataframe from a graph network from the rSMILE package
+# THIS ONE DOESNT CARE FOR TRANSITION CPTS AND RECYCLES FOR TEMPORAL PARENTS
 # getCPT <- function(net, node, temporal_order = c(1,2)) {
+#   # node = "Coral_Reef_Ecosystem_Health"
+#   # temporal_order = c(1,2)
+#   
 #   states <- net$getOutcomeIds(node)
 #   n_states <- length(states)
 #   
 #   # parents in the same time slice
 #   parents_now <- net$getParents(node)
-#   names(parents_now) <- unlist(lapply(parents_now, net$getNodeId))
+#   if (length(parents_now) > 0) {
+#     names(parents_now) <- vapply(
+#       parents_now,
+#       net$getNodeId,
+#       character(1)
+#     )
+#   }
 #   
-#   # parents from previous slices (temporal)
-#   parents_temp <- unlist(lapply(temporal_order, function(x) {
-#     # x = 2
-#     res <- net$getTemporalParents(node, x)
-#     if(length(res) == 0) return(NULL)
-#     resNode <- res[[1]]$handle
-#     resId <- res[[1]]$id
-#     resOrder <- res[[1]]$order
-#     names(resNode) <- paste0(resId, "_t-",resOrder)
-#     return(resNode)
+#   # --- Temporal parents (previous slices) ---
+#   parents_temp <- list()
+#   
+#   for (lag in temporal_order) {
 #     
-#   }))
+#     # rSMILE throws an error if the node is not temporal
+#     res <- tryCatch(
+#       net$getTemporalParents(node, lag),
+#       error = function(e) NULL
+#     )
+#     
+#     if (is.null(res) || length(res) == 0) next
+#     
+#     # rSMILE can return multiple temporal parents for the same lag
+#     for (r in res) {
+#       parent_handle <- r$handle
+#       parent_name   <- paste0(r$id, "_t-", r$order)
+#       parents_temp[[parent_name]] <- parent_handle
+#     }
+#   }
 #   
 #   # merge all parents
 #   parents <- c(parents_now, parents_temp)
 #   
-#   # no parents -> simple prior
+#   # --- No parents: simple prior ---
 #   if (length(parents) == 0) {
 #     probs <- net$getNodeDefinition(node)
-#     return(data.frame(State = states, Probability = probs))
+#     return(
+#       data.frame(
+#         State = states,
+#         Probability = probs,
+#         row.names = NULL
+#       )
+#     )
 #   }
 #   
 #   # list of outcomes for all parents
 #   parent_states <- lapply(parents, function(p) net$getOutcomeIds(p))
 #   
 #   # build all combinations of parent states
-#   parent_grid <- expand.grid(parent_states, KEEP.OUT.ATTRS = FALSE)
-#   # names(parent_grid) <- names(parents)
+#   parent_grid <- expand.grid(parent_states, KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE)
+#   names(parent_grid) <- names(parents)
 #   
 #   # raw CPT definition from SMILE
 #   raw <- net$getNodeDefinition(node)
 #   
-#   # reshape: each parent combo gets n_states probabilities
-#   cpt <- cbind(parent_grid, matrix(raw, ncol = n_states, byrow = TRUE))
-#   names(cpt)[(ncol(cpt)-n_states+1):ncol(cpt)] <- states
+#   # --- Reshape CPT ---
+#   cpt_matrix <- matrix(
+#     raw,
+#     ncol = n_states,
+#     byrow = TRUE
+#   )
+#   
+#   colnames(cpt_matrix) <- paste0("P_", states)
+#   
+#   cpt <- cbind(parent_grid, cpt_matrix)
 #   
 #   return(cpt)
+# }
+# 
+# getCPT <- function(net, node, max_order = NULL, max_order_search = 10) {
+#   
+#   # Test zone
+#   # node = "Coral_Reef_Ecosystem_Health"
+#   # node = "Env_Environmental_Shock"
+#   # max_order = NULL
+#   # max_order_search = 10
+#   # eo tz
+#   
+#   # --- node outcomes ---
+#   states <- net$getOutcomeIds(node)
+#   n_states <- length(states)
+#   
+#   # --- infer maximum temporal order if not provided ---
+#   if (is.null(max_order)) {
+#     found <- integer(0)
+#     for (k in 1:max_order_search) {
+#       res <- tryCatch(net$getTemporalParents(node, k), error = function(e) NULL)
+#       if (!is.null(res) && length(res) > 0) found <- c(found, k)
+#     }
+#     max_order <- if (length(found) == 0) 0L else max(found)
+#   }
+#   
+#   # helper to label definitions nicely
+#   def_name <- function(k, kmax) {
+#     if (k == 0) return("t0")
+#     if (k == kmax && kmax >= 2) return(paste0("t", k, "plus")) # applies to t>=k
+#     paste0("t", k)
+#   }
+#   
+#   out <- vector("list", length = max_order + 1L)
+#   names(out) <- vapply(0:max_order, def_name, character(1), kmax = max_order)
+#   
+#   for (k in 0:max_order) {
+#     # k = 1
+#     
+#     # --- get the correct parent list for THIS temporal definition ---
+#     # rSMILE returns a list of TemporalInfo objects with fields: handle, id, order
+#     parent_info <- tryCatch(net$getUnrolledParents(node, k), error = function(e) NULL)
+#     
+#     # getUnrolledParents doesn't work for initial slice
+#     if (is.null(parent_info)) {
+#       if (k == 0) {
+#         # No temporal information here; just contemporaneous parents
+#         parent_handles <- net$getParents(node)
+#         parent_labels  <- vapply(parent_handles, net$getNodeId, character(1))
+#       } else {
+#         stop("getUnrolledParents() failed for node=", node, " order=", k,
+#              ". This function requires SMILE wrappers that support temporal definitions.")
+#       }
+#     } else {
+#       # Convert TemporalInfo list to handles + labels (labels must encode temporal order)
+#       parent_handles <- vapply(parent_info, function(x) as.integer(x$handle), integer(1))
+#       
+#       parent_labels <- vapply(parent_info, function(x) {
+#         pid <- as.character(x$id)
+#         ord <- as.integer(x$order)
+#         if (ord == 0) pid else paste0(pid, "_t-", ord)
+#       }, character(1))
+#       
+#       # Ensure uniqueness if something repeats (rare but safe)
+#       parent_labels <- make.unique(parent_labels)
+#     }
+#     
+#     # --- get the correct numeric definition vector ---
+#     raw <- if (k == 0) {
+#       net$getNodeDefinition(node)
+#     } else {
+#       net$getNodeTemporalDefinition(node, k)
+#     }
+#     
+#     # --- if no parents in this definition: simple prior distribution ---
+#     if (length(parent_handles) == 0) {
+#       if (length(raw) != n_states) {
+#         stop("Node=", node, " order=", k,
+#              ": expected ", n_states, " probs (no parents) but got ", length(raw))
+#       }
+#       out[[def_name(k, max_order)]] <- data.frame(
+#         State = states,
+#         Probability = raw,
+#         row.names = NULL
+#       )
+#       next
+#     }
+#     
+#     # --- build parent state grid in the correct parent order ---
+#     parent_states <- lapply(parent_handles, function(h) net$getOutcomeIds(h))
+#     names(parent_states) <- parent_labels
+#     
+#     parent_grid <- expand.grid(parent_states, KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE)
+#     # expand.grid already keeps names(parent_states), so this is optional:
+#     names(parent_grid) <- parent_labels
+#     
+#     n_parent_configs <- nrow(parent_grid)
+#     expected_len <- n_parent_configs * n_states
+#     
+#     if (length(raw) != expected_len) {
+#       stop(
+#         "Node=", node, " temporalDef=", k, " (", def_name(k, max_order), ")",
+#         ": definition length mismatch.\n",
+#         "Parents in this definition: ", paste(parent_labels, collapse = ", "), "\n",
+#         "Parent configs=", n_parent_configs, ", outcomes=", n_states,
+#         " => expected ", expected_len, " numbers, got ", length(raw), ".\n",
+#         "This usually means you're reading the wrong temporal definition for the chosen parent set."
+#       )
+#     }
+#     
+#     # SMILE stores CPT rows sequentially by parent configuration, each row contains all child outcomes.
+#     cpt_matrix <- matrix(raw, ncol = n_states, byrow = TRUE)
+#     colnames(cpt_matrix) <- paste0("P_", states)
+#     
+#     out[[def_name(k, max_order)]] <- cbind(parent_grid, cpt_matrix)
+#   }
+#   
+#   out
 # }
 

@@ -35,14 +35,59 @@ source("License.R")
   
   
   # Function to extract list wise
-  extractCPTs <- function(net, nodes, temporal_order = c(1,2)) {
-    lapply(nodes, function(n) {
-      message(n)
+  extractCPTs <- function(net, nodes, max_t = 10, verbose = TRUE) {
+    
+    lapply(nodes, function(node_id) {
+      # node_id = "Env_Cyclone_Frequency_General"
+      if (verbose) message("Extracting: ", node_id)
+      
+      cpts <- getCPT(net, node_id, max_k = max_t)  # your getCPT now returns list(t0=..., t1=..., ...)
+      
       list(
-        node = n,
-        cpt  = getCPT(net, n, temporal_order) #getCPT is a function in 00_Initialisation.R
+        node = node_id,
+        cpts = cpts
       )
     })
+  }
+  
+  # Create a bulletproof function to write CPT to csv
+  writeCPTsToCSV <- function(extracted, saveFolder, overwrite = TRUE, verbose = TRUE) {
+    dir.create(saveFolder, showWarnings = FALSE, recursive = TRUE)
+    
+    invisible(lapply(extracted, function(x) {
+      node_id <- x$node
+      cpts    <- x$cpts  # list(t0=..., t1=..., ...)
+      
+      if (length(cpts) == 0) {
+        if (verbose) message("No CPTs for node: ", node_id)
+        return(NULL)
+      }
+      
+      invisible(lapply(names(cpts), function(tname) {
+        df <- cpts[[tname]]
+        
+        # Safety: only write data.frames
+        if (!is.data.frame(df)) {
+          if (verbose) message("Skipping non-data.frame CPT for ", node_id, " / ", tname)
+          return(NULL)
+        }
+        
+        # File name: CPT_<node>_<tX>.csv  (example: CPT_Coral_Reef_Ecosystem_Health_t1.csv)
+        out_file <- file.path(saveFolder, paste0("CPT_", node_id, "_", tname, ".csv"))
+        
+        if (!overwrite && file.exists(out_file)) {
+          if (verbose) message("Exists, skipped: ", out_file)
+          return(NULL)
+        }
+        
+        write.csv(df, out_file, row.names = FALSE)
+        if (verbose) message("Wrote: ", out_file)
+        
+        NULL
+      }))
+      
+      NULL
+    }))
   }
   
   
@@ -51,7 +96,6 @@ source("License.R")
   # CPT_01
   # CPT_02
   # ...
-  
   # Listing existing dirs
   existing <- list.dirs(pathProCpt, full.names = TRUE, recursive = FALSE)
   
@@ -64,18 +108,17 @@ source("License.R")
   
   # Creating folder from the next id
   saveFolder <- file.path(pathProCpt, paste0(next_id, "_CPT"))
-  dir.create(saveFolder, showWarnings = FALSE)
+  # dir.create(saveFolder, showWarnings = FALSE)
   
   
   # Getting CPTs
-  modelcpts <- extractCPTs(net, nodes)
+  modelcpts <- extractCPTs(net, nodes, max_t = 10, verbose = TRUE)
+  
   
   # Export CPTS to excel
-  lapply(modelcpts, function(x){
-    # x = modelcpts[[1]]
-    write.csv(x$cpt, file.path(file.path(saveFolder), paste0("CPT_",x$node,".csv")), row.names = FALSE)
-    
-  })
+  writeCPTsToCSV(modelcpts, saveFolder, overwrite = TRUE, verbose = TRUE)
+  
+  
   
   
   
@@ -85,6 +128,13 @@ source("License.R")
   
   
 # Trash -----
+  
+  # lapply(modelcpts, function(x){
+  #   # x = modelcpts[[1]]
+  #   write.csv(x$cpt, file.path(file.path(saveFolder), paste0("CPT_",x$node,".csv")), row.names = FALSE)
+  #   
+  # })
+  # 
   
   #############################################################################################
   #                                                                                           #
