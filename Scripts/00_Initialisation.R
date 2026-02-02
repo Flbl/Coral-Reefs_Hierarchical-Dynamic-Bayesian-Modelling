@@ -310,6 +310,247 @@ getCPT <- function(net, node, max_k = 2) {
 }
 
 
+# MIRROR getCPT to updateCPT for SMILE
+# Convert multi-dim coordinates -> linear index (0-based) in SMILE order.
+# dimSizes = c(parent1_n, parent2_n, ..., child_n)
+# coords   = c(parent1_state_index, ..., child_state_index)
+coordsToIndex <- function(coords, dimSizes) {
+  stopifnot(length(coords) == length(dimSizes))
+  idx <- 0L
+  prod <- 1L
+  # least-significant dimension is the child (rightmost)
+  for (i in length(dimSizes):1) {
+    idx <- idx + as.integer(coords[i]) * prod
+    prod <- prod * as.integer(dimSizes[i])
+  }
+  idx
+}
+
+# Temporal-aware parent list in *SMILE order* for definition k
+# labels: "Parent" or "Parent_t-1", etc.
+getParentsForDefinition <- function(net, node, k) {
+  # test zone
+  # node = "Coral_Reef_Ecosystem_Health"
+  # k = 1
+  
+  info <- tryCatch(net$getUnrolledParents(node, k), error = function(e) NULL)
+  
+  if (is.null(info)) {
+    if (k == 0) {
+      hs <- net$getParents(node)
+      labs <- vapply(hs, net$getNodeId, character(1))
+      return(list(handles = hs, labels = make.unique(labs)))
+    }
+    stop("getUnrolledParents failed for node=", node, " k=", k)
+  }
+  
+  handles <- vapply(info, function(x) as.integer(x$handle), integer(1))
+  labels  <- vapply(info, function(x) {
+    pid <- as.character(x$id)
+    ord <- as.integer(x$order)
+    if (ord == 0) pid else paste0(pid, "_t-", ord)
+  }, character(1))
+  
+  list(handles = handles, labels = make.unique(labels))
+}
+
+# Read CSV without mangling names (critical: keep "_t-1" as-is)
+readCPTcsv <- function(path) {
+  read.csv(path, check.names = FALSE, stringsAsFactors = FALSE)
+}
+
+
+# Function to convert csv dataframe to smile to flattened multidimensional array
+cptDfToSmileVector <- function(net, node, k, cpt_df) {
+  # Test zone
+  # node = "Coral_Reef_Ecosystem_Health"
+  # node = "Acute_Local_Pressure"
+  # k = 0
+  # cpt_df = readCPTcsv(file.path(cptPath,"CPT_Coral_Reef_Ecosystem_Health_t1.csv"))
+  # cpt_df = readCPTcsv(file.path(cptPath,"CPT_Acute_Local_Pressure_t1.csv"))
+  # eo tz
+  
+  
+  child_states <- net$getOutcomeIds(node)
+  n_child <- length(child_states)
+  
+  # Identify probability columns in the correct child outcome order
+  prob_cols <- paste0("P_", child_states)
+  if (!all(prob_cols %in% names(cpt_df))) {
+    missing <- prob_cols[!prob_cols %in% names(cpt_df)]
+    stop("Missing probability columns for node=", node, " k=", k, ": ",
+         paste(missing, collapse = ", "))
+  }
+  
+  # Get parents (handles + labels) for THIS definition k in SMILE order
+  par <- getParentsForDefinition(net, node, k)
+  parent_handles <- par$handles
+  parent_labels  <- par$labels
+  
+  # Parent sizes
+  parent_sizes <- if (length(parent_handles) > 0) {
+    vapply(parent_handles, net$getOutcomeCount, integer(1))
+  } else integer(0)
+  
+  dimSizes <- c(parent_sizes, n_child)
+  expected_len <- prod(dimSizes)
+  
+  # Initialize raw vector
+  raw <- rep(NA_real_, expected_len)
+  
+  # If no parents (prior)
+  if (length(parent_handles) == 0) {
+    probs <- as.numeric(cpt_df[1, prob_cols, drop = TRUE])
+    if (length(probs) != n_child) stop("Bad prior length for node=", node)
+    return(probs)
+  }
+  
+  # Check required parent columns exist (in the exact labels you exported)
+  if (!all(parent_labels %in% names(cpt_df))) {
+    missing <- parent_labels[!parent_labels %in% names(cpt_df)]
+    stop("Missing parent columns for node=", node, " k=", k, ": ",
+         paste(missing, collapse = ", "),
+         "\nTip: ensure you read.csv(..., check.names=FALSE) and that CSV headers match.")
+  }
+  
+  # Precompute outcome-id -> index maps for parents
+  parent_outcome_index <- lapply(parent_handles, function(h) {
+    setNames(seq_along(net$getOutcomeIds(h)) - 1L, net$getOutcomeIds(h))  # 0-based indices
+  })
+  names(parent_outcome_index) <- parent_labels
+  
+  child_index <- setNames(seq_along(child_states) - 1L, child_states)     # 0-based
+  
+  # Fill raw by mapping each row's parent-state ids to coords and writing probs
+  for (r in seq_len(nrow(cpt_df))) {
+    
+    # parent coords
+    pcoords <- integer(length(parent_handles))
+    for (j in seq_along(parent_handles)) {
+      lab <- parent_labels[j]
+      state_id <- cpt_df[r, lab]
+      idx_map <- parent_outcome_index[[lab]]
+      
+      if (is.na(state_id) || !(state_id %in% names(idx_map))) {
+        stop("Unknown parent state in CSV for node=", node, " k=", k,
+             " row=", r, " parent=", lab, " value=", state_id)
+      }
+      pcoords[j] <- idx_map[[state_id]]
+    }
+    
+    # child probs for this row (must be numeric)
+    probs <- as.numeric(cpt_df[r, prob_cols, drop = TRUE])
+    if (any(!is.finite(probs))) {
+      stop("Non-numeric/NA probability in node=", node, " k=", k, " row=", r)
+    }
+    
+    # write each child prob
+    for (s in seq_along(child_states)) {
+      coords <- c(pcoords, child_index[[child_states[s]]])
+      idx0 <- coordsToIndex(coords, dimSizes)   # 0-based
+      raw[idx0 + 1L] <- probs[s]
+    }
+  }
+  
+  # Final safety: ensure fully filled
+  if (any(is.na(raw))) {
+    stop("Raw CPT vector still has NA for node=", node, " k=", k,
+         ". This usually means your CSV is missing some parent combinations.")
+  }
+  
+  raw
+}
+
+
+# Function to apply one CSV to the network:
+applyCPTcsvToNet <- function(net, csv_path, node, k, verbose = TRUE) {
+  
+  if (!(node %in% net$getAllNodeIds())) {
+    stop("Node '", node, "' not found in network for file: ", csv_path)
+  }
+  
+  cpt_df <- readCPTcsv(csv_path)
+  # small csv export fix:
+  names(cpt_df) <- gsub(".","-", names(cpt_df), fixed = TRUE)
+  raw <- cptDfToSmileVector(net, node, k, cpt_df)
+  
+  # Check expected size against SMILE definition size
+  if (k == 0) {
+    expected <- length(net$getNodeDefinition(node))
+    if (length(raw) != expected) {
+      stop("Invalid definition array size for node '", node, "': expected ",
+           expected, " and got ", length(raw),
+           " (file: ", basename(csv_path), ")")
+    }
+    net$setNodeDefinition(node, raw)
+  } else {
+    # If node doesn't have that temporal definition, skip or stop
+    expected <- tryCatch(length(net$getNodeTemporalDefinition(node, k)),
+                         error = function(e) NA_integer_)
+    if (is.na(expected)) {
+      if (verbose) message("Skipping: node=", node, " has no temporal definition k=", k,
+                           " (file: ", basename(csv_path), ")")
+      return(invisible(FALSE))
+    }
+    if (length(raw) != expected) {
+      stop("Invalid temporal definition size for node '", node, "' k=", k,
+           ": expected ", expected, " and got ", length(raw),
+           " (file: ", basename(csv_path), ")")
+    }
+    net$setNodeTemporalDefinition(node, k, raw)
+  }
+  
+  if (verbose) message("Updated: ", node, " t", k, " from ", basename(csv_path))
+  invisible(TRUE)
+}
+
+
+# Function for batch folder update of CSV:
+updateNetFromCPTFolder <- function(net, cptPath, nodeIds = NULL, verbose = TRUE) {
+  
+  files <- list.files(cptPath, pattern = "^CPT_.*\\.csv$", full.names = TRUE)
+  if (length(files) == 0) stop("No CPT_*.csv files found in: ", cptPath)
+  
+  # Parse filenames
+  parse_file <- function(f) {
+    base <- basename(f)
+    # CPT_<node>_t<k>.csv OR CPT_<node>.csv
+    m <- regexec("^CPT_(.+?)(?:_t([0-9]+))?\\.csv$", base)
+    g <- regmatches(base, m)[[1]]
+    if (length(g) == 0) return(NULL)
+    
+    node <- g[2]
+    k <- if (length(g) >= 3 && nzchar(g[3])) as.integer(g[3]) else 0L
+    list(file = f, node = node, k = k)
+  }
+  
+  meta <- lapply(files, parse_file)
+  meta <- meta[!vapply(meta, is.null, logical(1))]
+  
+  # Filter nodes if requested
+  if (!is.null(nodeIds)) {
+    meta <- meta[vapply(meta, function(x) x$node %in% nodeIds, logical(1))]
+  }
+  
+  if (length(meta) == 0) stop("No CPT files match requested nodeIds (or parsing failed).")
+  
+  # Apply in a stable order: node, then k ascending (t0 before t1 etc.)
+  ord <- order(vapply(meta, `[[`, character(1), "node"),
+               vapply(meta, `[[`, integer(1), "k"))
+  meta <- meta[ord]
+  
+  ok <- 0L
+  for (x in meta) {
+    res <- applyCPTcsvToNet(net, x$file, x$node, x$k, verbose = verbose)
+    if (isTRUE(res)) ok <- ok + 1L
+  }
+  
+  if (verbose) message("Done. Updated ", ok, " CPT definitions from folder: ", cptPath)
+  net
+}
+
+
+
 
 # Function to create CPT node :
 createTemplateCptNode <- function(net, id, name, outcomes, xPos = NULL, yPos = NULL, temporal = 0) {

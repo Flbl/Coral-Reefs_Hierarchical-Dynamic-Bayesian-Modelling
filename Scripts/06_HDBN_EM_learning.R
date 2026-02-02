@@ -39,7 +39,7 @@ source("License.R")
 
 # Load the model
 net <- Network()
-net$readFile(file.path(pathGra,"Hierarchical_Dynamic_Bayesian_Network_CoralReefs_RORC_Template.xdsl"))    
+net$readFile(file.path(pathProGra,"Rorc_HDBN_Template_Soft_Constrained.xdsl"))    
 
 # Listing nodes
 # getCPT(net, "Fish_Carnivores_Biomass_Station_OBS_XX")
@@ -61,13 +61,17 @@ lapply(nodes,  function(x) getNodeSpec(net, x))
 
 
 
-
-
-
-
 # TRAIN WITH EM ----
   
-  
+  # get evidence size
+  # This is a value to get to tune ESS
+  # ESS = 0 → pure ML
+  # ESS = 100 → prior equivalent to 100 records
+  # ESS ≫ N → CPTs barely move
+
+  data <- read.csv(file.path(pathPro,"Hdbn_Evidence_Full.csv"))
+  dim(data)  
+
   ds <- DataSet()
   ds$readFile(file.path(pathPro,"Hdbn_Evidence_Full.csv"))
   
@@ -78,12 +82,11 @@ lapply(nodes,  function(x) getNodeSpec(net, x))
   
   
   fixedIds <- c(
-    # exogenous/environment
+    # Observed exogenous/environment
     "Env_Cyclone_Frequency_General",
     "Env_Nino_Phase_General",
     "Env_Site_Temperature_Regime",
     "Env_Site_Chlorophyll_a_Regime",
-    "Env_Site_Conditions",
     "Env_Bleaching_Alert_Area",
     "Env_Cyclone_R34",
     "Env_COTS_Outbreak",
@@ -91,15 +94,15 @@ lapply(nodes,  function(x) getNodeSpec(net, x))
     "Env_MPA",
     "Env_Gravity",
     
-    # engineered / deterministic-ish
-    "Cyclone_Impact",
+    # Encoder Nodes / engineered / deterministic-ish
+    "Env_Cyclone_Impact",
     "Env_Environmental_Shock",
     "Acute_Local_Pressure",
+    "Env_Site_Conditions",
     "Phase_Shift_Window",
     "Coral_Pressure_Index",
-    
-    # optional but recommended
     "Intrinsic_Resilience"
+    
   )
   
   # Convert to handles (safer than passing strings in some builds)
@@ -110,11 +113,11 @@ lapply(nodes,  function(x) getNodeSpec(net, x))
   
   # Keep original parameters (no uniformize, no randomize)
   em$setUniformizeParameters(FALSE)
-  # em$setRandomizeParameters(FALSE)
-  em$setRandomizeParameters(TRUE)
+  em$setRandomizeParameters(FALSE)
+  # em$setRandomizeParameters(TRUE)
   
   # Stabilize with ESS (start value; adjust if too stiff/too wiggly)
-  em$setEqSampleSize(0) #100
+  em$setEqSampleSize(200) #100
   
   # em$set_seed(111)
   # Run learning
@@ -123,12 +126,20 @@ lapply(nodes,  function(x) getNodeSpec(net, x))
   
   
   getCPT(net, "Env_Site_Conditions")
-  test <- getCPT(net, "Fish_Biomass")
+  getCPT(net, "Live_Coral_Cover")
+  getCPT(net, "Coral_Reef_Ecosystem_Health")
+  getCPT(net, "Coral_Reef_Ecosystem_Health")
+  getCPT(net, "Coral_Reef_Ecosystem_Health")
+  
+  
+  test <- getCPT(net, "Coral_Diversity")
   
   test <- net$getNodeDefinition("Live_Coral_Cover")
   
   
-
+  # Save the updated network
+  net$writeFile(file.path(pathProGra, "Rorc_HDBN_Template_Soft_Constrained_EM.xdsl"))
+  
 
 
 
