@@ -28,7 +28,9 @@ source("License.R")
 
   # Load the model directly from the genie designed and exported model 
   net <- Network()
-  net$readFile(file.path(pathGra,"Hierarchical_Dynamic_Bayesian_Network_CoralReefs_RORC_Template.xdsl"))    
+  # net$readFile(file.path(pathGra,"Hierarchical_Dynamic_Bayesian_Network_CoralReefs_RORC_Template.xdsl"))    
+  # net$readFile(file.path(pathGra,"Hierarchical_Dynamic_Bayesian_Network_CoralReefs_RORC_Template_Reduced.xdsl"))    
+  net$readFile(file.path(pathGra,"Hierarchical_Dynamic_Bayesian_Network_CoralReefs_RORC_Template_noOBSTREND.xdsl"))    
   
   # Get CPT list
   nodes <- net$getAllNodeIds()

@@ -290,6 +290,11 @@
   lapply(colnames(master)[-c(1:3)], check_levels, df = master)
   
   
+  # test, add one temporal column
+  # master$`Fish_Scraper_Biomass_Station_TREND_t-1` <- master$Fish_Scraper_Biomass_Station_TREND
+  
+  
+  
 # SAVE EVIDENCE ----
   # Saving dataset of evidence to train EM later
   # Keep only columns that are node IDs (and optionally keep Year/Site/Station if you want, but they won't match)
@@ -308,3 +313,123 @@
   
   
   
+  # Save test datasets
+  # Keep Year and Station columns
+  evid <- master %>%
+    select(-Site)  # strict: only network nodes
+  
+  # Ensure character columns (SMILE expects strings for discrete)
+  evid <- master %>%
+    mutate(across(everything(), ~ if (is.factor(.x)) as.character(.x) else .x))
+  
+  # convert "" to NA to ensure all is NA
+  evid[evid == ""] <- NA
+  
+  # Save so the SMILE api can read the file (And use na = "" to convert all NA to "" for SMILE API)
+  write.csv(evid, file.path(pathPro,"Hdbn_Evidence_Full_StationYear.csv"), na = "", row.names = FALSE, )
+  
+  
+  
+  
+  
+  # ----------------------------
+  # A) Build Dynamic sequences (long -> wide)
+  # ----------------------------
+  
+  # Choose your series identifier.
+  # If you want per-station time series:
+  series_keys <- c("Site", "Station")
+  
+  # Keep only columns that are network nodes (plus keys and time)
+  node_ids <- net$getAllNodeIds()
+  
+  df_long <- master %>%
+    select(any_of(c("Year", series_keys, node_ids))) %>%
+    arrange(across(all_of(series_keys)), Year)
+  
+  # Create a per-series slice index (0..T-1) in chronological order
+  df_long <- df_long %>%
+    group_by(across(all_of(series_keys))) %>%
+    arrange(Year, .by_group = TRUE) %>%
+    mutate(slice = row_number() - 1L) %>%
+    ungroup()
+  
+  # Compute maximum number of slices across all series
+  Tmax <- df_long %>%
+    count(across(all_of(series_keys)), name = "T") %>%
+    summarise(Tmax = max(T)) %>%
+    pull(Tmax)
+  
+  # Wide format: one row per series, columns per node per slice
+  # Column naming convention: NodeID__t0, NodeID__t1, ...
+  df_wide <- df_long %>%
+    pivot_wider(
+      id_cols = all_of(series_keys),
+      names_from = slice,
+      values_from = any_of(node_ids),
+      names_glue = "{.value}__t{slice}"
+    )
+  
+  # Optional but recommended: ensure all values are character (discrete outcomes)
+  df_wide <- df_wide %>%
+    mutate(across(everything(), ~ if (is.factor(.x)) as.character(.x) else .x))
+  
+  # Write evidence table
+  evid_path <- file.path(pathPro, "Hdbn_Evidence_DBNSlices.csv")
+  write.csv(df_wide, evid_path, row.names = FALSE)
+  
+  
+  
+  # SAVE ONLY N SLICES
+  S_keep = 0
+  # --- keep only key columns + node columns for the first 3 slices ---
+  keep_cols <- c(series_keys, unlist(lapply(node_ids, function(nid) {
+    paste0(nid, "__t", S_keep)
+  })))
+  
+  keep_cols <- intersect(keep_cols, colnames(df_wide))  # safety if some missing
+  
+  # Filter columns
+  df_wide_3 <- df_wide %>% select(all_of(keep_cols))
+  
+  # Save
+  evid3_path <- file.path(pathPro, "Hdbn_Evidence_DBNSlices_t0.csv")
+  write.csv(df_wide_3, evid3_path, row.names = FALSE)
+  
+  
+  
+  
+  # NoOBSTREND evidence tables
+  df_noObsTrend <- df_wide %>%
+    select(-matches("_TREND(__t\\d+)?$")) %>%      # drop all TREND cols (incl. __t0..__t11)
+    rename_with(~ sub("_Station_OBS", "", .x), matches("_OBS"))
+  
+  
+  # Write evidence table
+  evid_path <- file.path(pathPro, "Hdbn_Evidence_DBNSlices_noOBSTREND.csv")
+  write.csv(df_noObsTrend, evid_path, row.names = FALSE)
+  
+  
+  
+  
+  # Convert to long (not needed)
+  # long_dbn <- df_wide %>%
+  #   pivot_longer(
+  #     cols = -all_of(series_keys),
+  #     names_to = c("node", "t"),
+  #     names_pattern = "^(.*)__t(\\d+)$",
+  #     values_to = "value"
+  #   ) %>%
+  #   mutate(t = as.integer(t)) %>%
+  #   pivot_wider(
+  #     names_from = node,
+  #     values_from = value
+  #   ) %>%
+  #   arrange(Site, Station, t)
+  # 
+  # # Optional: create a single series id if GeNIe wants one column
+  # long_dbn <- long_dbn %>%
+  #   mutate(Series = paste(Site, Station, sep="__")) %>%
+  #   select(Series, t, everything(), -Site, -Station)
+  # 
+  # write.csv(long_dbn, file.path(pathPro,"Hdbn_Evidence_DBNSlices_long.csv"), na = "", row.names = FALSE)

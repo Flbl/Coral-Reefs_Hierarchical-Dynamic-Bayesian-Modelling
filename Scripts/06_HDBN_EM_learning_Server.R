@@ -11,15 +11,32 @@
 # Try EM learning with biological and environmental data state tables
 # Template nodes can be given "learning tables" with rows representing one case of observed evidence 
 
+# --------------------------------------------------------------------------------------------------
+# This script is updated to work on a server
+# To make it work from the R720:
+#  Need to load libraries and paths inside
+# Folders are already pre-created on the server
+# Data is pre-loaded on the server
+# 
+# --------------------------------------------------------------------------------------------------
+
 
 # INIT -----
 
 # Clean slate
 rm(list=ls(all=TRUE))
 
+# Paths
+# pathPro <- file.path("Data", "01_Processed")
+# pathProGra <- file.path("Data", "01_Processed", "Graph")
+
 # Libraries initialization
-init1 <- tail(unlist(strsplit(rstudioapi::getActiveDocumentContext()$path, "/")), n = 1)
-source("Scripts/00_Initialisation.R")
+# init1 <- tail(unlist(strsplit(rstudioapi::getActiveDocumentContext()$path, "/")), n = 1)
+# source("Scripts/00_Initialisation.R")
+
+library("dplyr")
+library("tibble")
+library("purrr")
 
 # /!\ Exception from the Initialisation.R script
 # Install the package rSMILE:
@@ -40,16 +57,14 @@ source("License.R")
 
 # Load the model
 net <- Network()
-net$readFile(file.path(pathProGra,"Rorc_HDBN_Template_Soft_Constrained.xdsl"))
-# net$readFile(file.path(pathProGra,"Rorc_HDBN_Template_Soft_Constrained_Reduced.xdsl"))    
-# net$readFile(file.path(pathProGra,"Rorc_HDBN_Template_Soft_Constrained_noOBSTREND.xdsl"))    
+net$readFile(file.path("Rorc_HDBN_Template_Soft_Constrained.xdsl"))    
 
 # Listing nodes
 # getCPT(net, "Fish_Carnivores_Biomass_Station_OBS_XX")
 # getCPT(net, "Invertebrate_Abundance_Station_True_XX")
 
 nodes <- net$getAllNodeIds()
-length(nodes)
+# length(nodes)
 
 # names(nodes) <- net$getAllNodes()
 
@@ -74,24 +89,20 @@ length(nodes)
   # ESS = 100 → prior equivalent to 100 records
   # ESS ≫ N → CPTs barely move
 
-  data <- read.csv(file.path(pathPro,"Hdbn_Evidence_Full.csv"))
+  # data <- read.csv(file.path(pathPro,"Hdbn_Evidence_Full.csv"))
   # data <- read.csv(file.path(pathPro,"Hdbn_Evidence_Full_StationYear.csv"), check.names = FALSE)
-  # data <- read.csv(file.path(pathPro,"Hdbn_Evidence_DBNSlices.csv"), check.names = FALSE)
+  data <- read.csv(file.path("Hdbn_Evidence_DBNSlices.csv"), check.names = FALSE)
   # data <- read.csv(file.path(pathPro,"Hdbn_Evidence_DBNSlices_t0t2.csv"), check.names = FALSE)
-  # data <- read.csv(file.path(pathPro,"Hdbn_Evidence_DBNSlices_t0t1.csv"), check.names = FALSE)
-  # data <- read.csv(file.path(pathPro,"Hdbn_Evidence_DBNSlices_t0.csv"), check.names = FALSE)
-  # data <- read.csv(file.path(pathPro,"Hdbn_Evidence_DBNSlices_noOBSTREND.csv"), check.names = FALSE)
   series_keys <- c("Site","Station")
   dim(data)  
 
-  
-  # count_non_na_by_slice <- function(prefix) {
-  #   sapply(0:2, function(s) {
-  #     cname <- paste0(prefix, "__t", s)
-  #     if (!cname %in% names(data)) return(NA_integer_)
-  #     sum(!is.na(data[[cname]]))
-  #   })
-  # }
+  count_non_na_by_slice <- function(prefix) {
+    sapply(0:2, function(s) {
+      cname <- paste0(prefix, "__t", s)
+      if (!cname %in% names(data)) return(NA_integer_)
+      sum(!is.na(data[[cname]]))
+    })
+  }
   
   # count_non_na_by_slice("Fish_Scraper_Biomass_Station_TREND")
   # count_non_na_by_slice("Fish_Scraper_Biomass_Station_OBS")
@@ -102,21 +113,15 @@ length(nodes)
   # nodes
   
   ds <- DataSet()
-  ds$readFile(file.path(pathPro,"Hdbn_Evidence_Full.csv"))
+  # ds$readFile(file.path(pathPro,"Hdbn_Evidence_Full.csv"))
   # ds$readFile(file.path(pathPro,"Hdbn_Evidence_Full_StationYear.csv"))
-  # ds$readFile(file.path(pathPro,"Hdbn_Evidence_DBNSlices.csv"))
+  ds$readFile(file.path("Hdbn_Evidence_DBNSlices.csv"))
   # ds$readFile(file.path(pathPro,"Hdbn_Evidence_DBNSlices_t0t2.csv"))
-  # ds$readFile(file.path(pathPro,"Hdbn_Evidence_DBNSlices_long.csv"))
-  # ds$readFile(file.path(pathPro,"Hdbn_Evidence_DBNSlices_t0t1.csv"))
-  # ds$readFile(file.path(pathPro,"Hdbn_Evidence_DBNSlices_t0.csv"))
-  # ds$readFile(file.path(pathPro,"Hdbn_Evidence_DBNSlices_noOBSTREND.csv"))
   
   
   # ----------------------------
   # C) Build explicit matching with correct slices
   # ----------------------------
-  
-  # matching <- ds$matchNetwork(net)
   
   # Helper to create a DataMatch object (rSMILE uses reference classes)
   make_match <- function(column_index0, node_handle, slice_index0) {
@@ -137,8 +142,6 @@ length(nodes)
   # Compute maximum number of slices across all series
   Tmax <- 12
   # Tmax <- 3
-  # Tmax <- 2
-  # Tmax <- 1
   
   matching <- list()
   
@@ -155,14 +158,10 @@ length(nodes)
   
   length(matching)  # should be roughly (#nodes) * (Tmax) minus missing columns
   
-  # Set the number of slices
   net$setSliceCount(Tmax)
   # net$setNumberOfSlices(Tmax)
   
   
-  # ----------------------------
-  # Set FIXED NODES
-  # ----------------------------
   fixedIds <- c(
     # Observed exogenous/environment
     "Env_Cyclone_Frequency_General",
@@ -188,42 +187,21 @@ length(nodes)
   )
   
   # Fix also OBS and TREND nodes as they should "always be observed" for EM
-  fixedIds <- c(fixedIds, grep("OBS|TREND", nodes, value = TRUE))
+  # fixedIds <- c(fixedIds, grep("OBS|TREND", nodes, value = TRUE))
   
   # Convert to handles (safer than passing strings in some builds)
   fixedHandles <- vapply(fixedIds, net$getNode, integer(1))
   
-  
-  # ----------------------------
-  # Set target nodes
-  # ----------------------------
-  
-  # choose a small target set
-  # target_ids <- c(
-  #   "Massive_Coral_Cover",
-  #   "Live_Coral_Cover"
-  #   # "Massive_Coral_Cover"
-  #   # "Massive_Coral_Cover"
-  #   # "Massive_Coral_Cover_Station_OBS",
-  #   # "Massive_Coral_Cover_Station_TREND"
-  #   
-  # )
-
-  # net$clearAllTargets()
-  # for (id in target_ids) net$setTarget(id, TRUE)
-  
-  
   # ----------------------------
   # E) Run EM learning
   # ----------------------------
-  net$BayesianAlgorithmType
-  net$getBayesianAlgorithm()
+  # net$BayesianAlgorithmType
+  # net$getBayesianAlgorithm()
   # EPIS (recommended stochastic algorithm per BayesFusion)
-  net$setBayesianAlgorithm(net$BayesianAlgorithmType$EPIS_SAMPLING)
-  net$getBayesianAlgorithm()
+  # net$setBayesianAlgorithm(net$BayesianAlgorithmType$EPIS_SAMPLING)
   
   # Quality vs runtime: start moderate; increase if estimates are noisy
-  net$setSampleCount(20000)   # try 20k-100k depending on runtime
+  # net$setSampleCount(2000)   # try 20k-100k depending on runtime
   
   # Reproducibility
   net$setRandSeed(12345)
@@ -233,22 +211,15 @@ length(nodes)
   em$setRandomizeParameters(FALSE)
   
   # Equivalent sample size (ESS) is your smoothing/regularization knob
-  em$setEqSampleSize(50)
+  em$setEqSampleSize(0)
   
   # em$learn(ds, net, matching)
+  message("Starting learning")
   em$learn(ds, net, matching, fixedNodes = fixedHandles)
   
   
   # Now inspect a transition CPT (t1) for a plate node that truly has slice>0 evidence
-  getCPT(net, "Tabular_Coral_Cover")
-  getCPT(net, "Live_Coral_Cover")
-  getCPT(net, "Coral_Reef_Ecosystem_Diversity")
-  getCPT(net, "Coral_Reef_Ecosystem_Health")
-  
-  getCPT(net, "Fish_Scraper_Biomass_Station_TREND")
-  getCPT(net, "Fish_Scraper_Biomass_Station_OBS")
-  getCPT(net, "Sea_Urchins_Abundance")
-  getCPT(net, "Sea_Urchins_Abundance_Station_TREND")
+  # getCPT(net, "Fish_Scraper_Biomass_Station_TREND")
   
   
   
@@ -303,8 +274,8 @@ length(nodes)
   
   
   # Save the updated network
-  net$writeFile(file.path(pathProGra, "Rorc_HDBN_Template_Soft_Constrained_EM.xdsl"))
-  
+  net$writeFile(file.path("Rorc_HDBN_Template_Soft_Constrained_EM.xdsl"))
+  message("Learning, model saved.")
 
 
 

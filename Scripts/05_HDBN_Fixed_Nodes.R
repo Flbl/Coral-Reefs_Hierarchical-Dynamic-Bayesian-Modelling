@@ -35,7 +35,9 @@
 
   # Load the model directly from the genie designed and exported model 
   net <- Network()
-  net$readFile(file.path(pathGra,"Hierarchical_Dynamic_Bayesian_Network_CoralReefs_RORC_Template.xdsl"))    
+  # net$readFile(file.path(pathGra,"Hierarchical_Dynamic_Bayesian_Network_CoralReefs_RORC_Template.xdsl"))    
+  # net$readFile(file.path(pathGra,"Hierarchical_Dynamic_Bayesian_Network_CoralReefs_RORC_Template_Reduced.xdsl"))    
+  net$readFile(file.path(pathGra,"Hierarchical_Dynamic_Bayesian_Network_CoralReefs_RORC_Template_noOBSTREND.xdsl"))    
   
   # Get CPT list
   nodes <- net$getAllNodeIds()
@@ -50,7 +52,7 @@
   # Some biological nodes are also encoder nodes (Phase shift window, coral pressure index, Intrinsic Resilience)
   
   # toFix <- grep("Env", nodes, value = TRUE)
-  toFix <- c("Env_Site_Conditions","Env_Chronic_Environmental_Stress","Env_Environmental_Shock","Env_Cyclone_Impact")
+  toFix <- c("Env_Site_Conditions","Env_Chronic_Environmental_Stress","Env_Environmental_Shock","Env_Cyclone_Impact","Env_Acute_Local_Pressure")
   toFix <- c(toFix,
              "Phase_Shift_Window",
              "Coral_Pressure_Index",
@@ -73,6 +75,7 @@
   # The goal is to get a less elicitation and more "Expert validation" than corrections
   
   toSoft <- c("Coral_Reef_Ecosystem_Health",
+              "Coral_Reef_Ecosystem_Diversity",
               "Fish_Grazing",
               "Urchin_Grazing",
               "Grazing_pressure",
@@ -85,10 +88,19 @@
   
   run_cpt_app(
     pathProCpt = pathProCpt,
-    folder = "02_CPT",
+    folder = "05_CPT",
     cpt_patterns = c(toFix, toSoft)
   )
 
+  
+  # Updating OBS and TREND nodes as encoder nodes to fix them for learning
+  obsTrendNodes <- grep("OBS|TREND", nodes, value = TRUE)
+  
+  run_cpt_app(
+    pathProCpt = pathProCpt,
+    folder = "05_CPT",
+    cpt_patterns = c(obsTrendNodes)
+  )
 
   
 # UPDATING MODEL CPTs
@@ -108,12 +120,12 @@
   # Probability column names are P_<state> WHICH EXACTLY MATCH net$getOutcomeIds(node) since its the same structure from getCPT
   # Parent columns are exactly as in getCPT(): current parents by id, temporal as "<id>_t-<lag>"
   
-  cptPath <- file.path(pathProCpt,"02_CPT")
+  cptPath <- file.path(pathProCpt,"05_CPT")
   # list.files(cptPath)
   
-  test <- read.csv(file.path(cptPath, "CPT_Acute_Local_Pressure_t1.csv"))
-  net$getOutcomeIds("Acute_Local_Pressure")
-  getCPT(net,"Acute_Local_Pressure")
+  test <- read.csv(file.path(cptPath, "CPT_Env_Acute_Local_Pressure_t1.csv"))
+  net$getOutcomeIds("Env_Acute_Local_Pressure")
+  getCPT(net,"Env_Acute_Local_Pressure")
   getCPT(net,"Env_Environmental_Shock")
   
   # net
@@ -127,7 +139,9 @@
   # Save the new model
   # ""
   # Save the updated network
-  net$writeFile(file.path(pathProGra, "Rorc_HDBN_Template_Soft_Constrained.xdsl"))
+  # net$writeFile(file.path(pathProGra, "Rorc_HDBN_Template_Soft_Constrained.xdsl"))
+  # net$writeFile(file.path(pathProGra, "Rorc_HDBN_Template_Soft_Constrained_Reduced.xdsl"))
+  net$writeFile(file.path(pathProGra, "Rorc_HDBN_Template_Soft_Constrained_noOBSTREND.xdsl"))
   
   
 # Trash ------

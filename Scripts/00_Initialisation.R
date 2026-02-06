@@ -88,6 +88,7 @@ if(init1 == "02_Environment_Data_To_States.R") {
 if(init1 == "03_HDBN_Template_Evidence.R") {
   
   if (!require("purrr")) install.packages("purrr")
+  if (!require("tidyr")) install.packages("tidyr")
   
 }
 
