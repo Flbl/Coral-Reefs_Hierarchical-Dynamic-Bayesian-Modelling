@@ -326,7 +326,26 @@ run_cpt_app <- function(pathProCpt,
           tr.active-row td {
             background-color: #5485b0 !important;
           }
-        "))
+        ")),
+        tags$script(HTML("
+        Shiny.addCustomMessageHandler('activeRow', function(message) {
+          var active = message.row;
+      
+          var $tbl = $('#cpt_table table');
+          if ($tbl.length === 0) return;
+      
+          // IMPORTANT: do NOT initialize DataTables here
+          if (!$.fn.dataTable.isDataTable($tbl)) return;
+      
+          var table = $tbl.DataTable();
+      
+          table.rows().every(function(rowIdx) {
+            var tr = this.node();
+            if ((rowIdx + 1) === active) $(tr).addClass('active-row');
+            else $(tr).removeClass('active-row');
+          });
+        });
+      "))
       ),
       
       mainPanel(
@@ -374,17 +393,186 @@ run_cpt_app <- function(pathProCpt,
     cpt_type <- reactiveVal("with_parents") #safe default
     state_cols <- reactiveVal(integer(0))
     # locked <- reactiveVal(logical(0))
-    lock_store <- reactiveVal(NULL)   # will hold a matrix (rows x states) or a vector
-    obs_inited <- reactiveVal(FALSE)  # ensures we don't create duplicate observers
+
+    lock_store <- reactiveVal(NULL) # will hold a matrix (rows x states) or a vector
+    obs_inited <- reactiveVal(FALSE)  # ensures we don't create duplicate observers # becomes irrelevant
     current_row <- reactiveVal(1)
     
+    # ---- NEW: keep handles to destroy old observers (prevents session slowdown)
+    slider_obs <- reactiveVal(list())
+    lock_obs   <- reactiveVal(NULL)
+    
+    # ---- NEW: DT proxy (avoid full DT rebuild each time cpt() changes)
+    cpt_proxy <- DT::dataTableProxy("cpt_table")
     
     # Making the active row available to javascript
     observe({
       session$sendCustomMessage("activeRow", list(row = current_row()))
     })
     
+    # ----- Helper functions to destroy observers
+    destroy_observers <- function() {
+      # destroy slider observers
+      old <- slider_obs()
+      if (length(old) > 0) {
+        lapply(old, function(h) {
+          try(h$destroy(), silent = TRUE)
+          NULL
+        })
+      }
+      slider_obs(list())
+      
+      # destroy lock observer
+      lo <- lock_obs()
+      if (!is.null(lo)) {
+        try(lo$destroy(), silent = TRUE)
+        lock_obs(NULL)
+      }
+    }
     
+    make_slider_observers <- function() {
+      req(cpt())
+      req(cpt_type())
+      req(!is.null(lock_store()))
+      
+      # IMPORTANT: remove previous observers
+      destroy_observers()
+      
+      df <- cpt()
+      sc <- state_cols()
+      n_controls <- if (cpt_type() == "no_parents") nrow(df) else length(sc)
+      req(n_controls > 0)
+      
+      handles <- vector("list", n_controls)
+      
+      for (i in seq_len(n_controls)) {
+        local({
+          idx <- i
+          
+          handles[[idx]] <<- observeEvent(input[[paste0("p_", idx)]], {
+            if (updating()) return()
+            df <- cpt()
+            row <- current_row()
+            sc  <- state_cols()
+            
+            n_controls2 <- if (cpt_type() == "no_parents") nrow(df) else length(sc)
+            
+            # read locks from UI
+            lock_vals <- vapply(
+              seq_len(n_controls2),
+              function(k) isTRUE(input[[paste0("lock_", k)]]),
+              logical(1)
+            )
+            
+            # persist locks
+            ls <- lock_store()
+            if (cpt_type() == "no_parents") {
+              lock_store(lock_vals)
+            } else {
+              ls[row, ] <- lock_vals
+              lock_store(ls)
+            }
+            
+            # current probs for this row
+            old_probs <- if (cpt_type() == "no_parents") {
+              as.numeric(df$Probability)
+            } else {
+              as.numeric(df[row, sc])
+            }
+            
+            # clamp changed slider against locked mass
+            sum_locked_other <- sum(old_probs[lock_vals & seq_along(old_probs) != idx])
+            max_allowed <- max(0, 1 - sum_locked_other)
+            
+            new_value_raw <- as.numeric(input[[paste0("p_", idx)]])
+            new_value <- min(max(new_value_raw, 0), max_allowed)
+            
+            # snap only this slider if infeasible
+            if (!isTRUE(all.equal(new_value, new_value_raw))) {
+              updating(TRUE)
+              on.exit(updating(FALSE), add = TRUE)
+              updateSliderInput(session, paste0("p_", idx), value = new_value)
+            }
+            
+            updating(TRUE)
+            on.exit(updating(FALSE), add = TRUE)
+            
+            new_probs <- renormalise(
+              probs     = old_probs,
+              locked    = lock_vals,
+              changed   = idx,
+              new_value = new_value
+            )
+            
+            # write back only to current row
+            if (cpt_type() == "no_parents") {
+              df$Probability <- new_probs
+            } else {
+              df[row, sc] <- new_probs
+            }
+            cpt(df)
+            
+            # update other sliders only
+            for (j in seq_along(new_probs)) {
+              if (j != idx) updateSliderInput(session, paste0("p_", j), value = new_probs[j])
+            }
+          }, ignoreInit = TRUE)
+        })
+      }
+      
+      slider_obs(handles)
+      
+      # ---- Lock checkbox observer (single) — recreated each time because n_controls can change
+      lo <- observeEvent({
+        df <- cpt()
+        sc <- state_cols()
+        n_controls2 <- if (cpt_type() == "no_parents") nrow(df) else length(sc)
+        lapply(seq_len(n_controls2), function(i) input[[paste0("lock_", i)]])
+      }, {
+        req(!is.null(lock_store()))
+        df <- cpt()
+        sc <- state_cols()
+        n_controls2 <- if (cpt_type() == "no_parents") nrow(df) else length(sc)
+        row <- current_row()
+        
+        lock_vals <- vapply(
+          seq_len(n_controls2),
+          function(k) isTRUE(input[[paste0("lock_", k)]]),
+          logical(1)
+        )
+        
+        if (cpt_type() == "no_parents") {
+          lock_store(lock_vals)
+        } else {
+          ls <- lock_store()
+          ls[row, ] <- lock_vals
+          lock_store(ls)
+        }
+      }, ignoreInit = TRUE)
+      
+      lock_obs(lo)
+    }
+    
+    # Function to sanitize df_show before datatable() and before replaceData()
+    sanitize_for_dt <- function(df) {
+      df <- as.data.frame(df, stringsAsFactors = FALSE, check.names = FALSE)
+      
+      df[] <- lapply(df, function(col) {
+        if (is.factor(col)) col <- as.character(col)
+        
+        # POSIXlt is notorious in JSON
+        if (inherits(col, "POSIXlt")) col <- as.character(col)
+        
+        # list columns will break DT JSON
+        if (is.list(col)) col <- vapply(col, function(x) paste(x, collapse = ","), character(1))
+        
+        if (is.numeric(col)) {
+          col[!is.finite(col)] <- NA_real_
+        }
+        col
+      })
+      df
+    }
     
     # ---- Monotone UI: weights + scores (only when CPT has parents)
     output$mono_weights_ui <- renderUI({
@@ -487,6 +675,11 @@ run_cpt_app <- function(pathProCpt,
       lock_store(matrix(FALSE, nrow = nrow(new_df), ncol = length(st$child_cols)))
       obs_inited(FALSE)
       showNotification("Monotone CPT applied. You can now tweak row-wise.", type = "message")
+      
+      # Destroy observers
+      destroy_observers()
+      make_slider_observers()
+      
     })
     
     
@@ -509,9 +702,14 @@ run_cpt_app <- function(pathProCpt,
         n_states <- length(state_cols())
         lock_store(matrix(FALSE, nrow = nrow(df), ncol = n_states))
       }
+      # destroy and rebuild observers for the new UI structure
+      destroy_observers()
       obs_inited(FALSE)
       current_row(1)
+      # build fresh observers for the freshly-rendered sliders/locks (after cpt()/lock_store() are set)
+      make_slider_observers()
     })
+    
     
     # ---- Row selector (only if parents exist) ----
     output$row_selector <- renderUI({
@@ -766,130 +964,7 @@ run_cpt_app <- function(pathProCpt,
     })
     
     
-    
-    # ---- Slider observer ----
-    observeEvent(list(cpt(), state_cols()), {
-      req(cpt())
-      req(cpt_type())
-      # req(length(state_cols()) > 0)
-      req(!is.null(lock_store()))
-      
-      df <- cpt()
-      n_controls <- if (cpt_type() == "no_parents") nrow(df) else length(state_cols())
-      req(n_controls > 0)
-      
-      # Do not re-register observers repeatedly
-      if (obs_inited()) return()
-      obs_inited(TRUE)
-      
-      n_controls <- if (cpt_type() == "no_parents") nrow(cpt()) else length(state_cols())
-      for (i in seq_len(n_controls)) {
-        local({
-          idx <- i
-          
-          observeEvent(input[[paste0("p_", idx)]], {
-            if (updating()) return()
-            
-            df <- cpt()
-            row <- current_row()
-            sc  <- state_cols()
-            
-            # read current lock state from UI
-            n_controls <- if (cpt_type() == "no_parents") nrow(df) else length(sc)
-            lock_vals <- vapply(
-              seq_len(n_controls),
-              function(k) isTRUE(input[[paste0("lock_", k)]]),
-              logical(1)
-            )
-            
-            # persist locks for this row
-            ls <- lock_store()
-            if (cpt_type() == "no_parents") {
-              lock_store(lock_vals)
-            } else {
-              ls[row, ] <- lock_vals
-              lock_store(ls)
-            }
-            
-            # current probs for this row
-            old_probs <- if (cpt_type() == "no_parents") {
-              as.numeric(df$Probability)
-            } else {
-              as.numeric(df[row, sc])
-            }
-            
-            sum_locked_other <- sum(old_probs[lock_vals & seq_along(old_probs) != idx])
-            max_allowed <- max(0, 1 - sum_locked_other)
-            
-            new_value <- min(max(as.numeric(input[[paste0("p_", idx)]]), 0), max_allowed)
-            
-            # If user dragged beyond feasible region, snap ONLY this slider to max_allowed
-            if (!isTRUE(all.equal(new_value, as.numeric(input[[paste0("p_", idx)]])))) {
-              updating(TRUE)
-              on.exit(updating(FALSE), add = TRUE)
-              updateSliderInput(session, paste0("p_", idx), value = new_value)
-            }
-            
-            # new_value <- as.numeric(input[[paste0("p_", idx)]])
-            
-            updating(TRUE)
-            on.exit(updating(FALSE), add = TRUE)
-            
-            new_probs <- renormalise(
-              probs     = old_probs,
-              locked    = lock_vals,
-              changed   = idx,
-              new_value = new_value
-            )
-            
-            # write back only to the current row
-            if (cpt_type() == "no_parents") {
-              df$Probability <- new_probs
-            } else {
-              df[row, sc] <- new_probs
-            }
-            cpt(df)
-            
-            # update other sliders only
-            for (j in seq_along(new_probs)) {
-              if (j != idx) {
-                updateSliderInput(session, paste0("p_", j), value = new_probs[j])
-              }
-            }
-          }, ignoreInit = TRUE)
-        })
-      }
-    }, ignoreInit = TRUE)
-    
-    
-    observeEvent({
-      req(cpt_type())
-      df <- cpt()
-      n_controls <- if (cpt_type() == "no_parents") nrow(df) else length(state_cols())
-      lapply(seq_len(n_controls), function(i) input[[paste0("lock_", i)]])
-    }, {
-      req(cpt_type())
-      req(!is.null(lock_store()))
-      df <- cpt()
-      n_controls <- if (cpt_type() == "no_parents") nrow(df) else length(state_cols())
-      row <- current_row()
-      
-      lock_vals <- vapply(
-        seq_len(n_controls),
-        function(k) isTRUE(input[[paste0("lock_", k)]]),
-        logical(1)
-      )
-      
-      if (cpt_type() == "no_parents") {
-        lock_store(lock_vals)
-      } else {
-        ls <- lock_store()
-        ls[row, ] <- lock_vals
-        lock_store(ls)
-      }
-    }, ignoreInit = TRUE)
-    
-    
+  
     observeEvent(current_row(), {
       req(!is.null(lock_store()))
       if (cpt_type() == "with_parents") {
@@ -997,29 +1072,27 @@ run_cpt_app <- function(pathProCpt,
     # ---- Table ----
     output$cpt_table <- renderDT({
       req(cpt())
+      
       df <- cpt()
       
-      # columns to round
       sc <- state_cols()
       prob_names <- character(0)
       if (cpt_type() == "with_parents" && length(sc) > 0) prob_names <- names(df)[sc]
       if (cpt_type() == "no_parents" && "Probability" %in% names(df)) prob_names <- "Probability"
       
-      # make a rounded DISPLAY copy (doesn't touch your cpt())
       df_show <- df
-      if (length(prob_names) > 0) {
-        df_show[, prob_names] <- round(df_show[, prob_names], 2)
-      }
+      if (length(prob_names) > 0) df_show[, prob_names] <- round(df_show[, prob_names], 2)
       
-      active <- current_row()  # << this is the key
+      # HARD sanitize for DT/JSON
+      df_show <- sanitize_for_dt(df_show)
+      names(df_show) <- make.unique(names(df_show))   # avoid duplicate names
       
-      dt <- datatable(
+      datatable(
         df_show,
         selection = "none",
+        rownames = FALSE,
         options = list(
           pageLength = 100,
-          
-          # dblclick row -> send row to Shiny
           rowCallback = JS("
         function(row, data, index) {
           $(row).off('dblclick');
@@ -1027,26 +1100,39 @@ run_cpt_app <- function(pathProCpt,
             Shiny.setInputValue('table_dblclick_row', index + 1, {priority: 'event'});
           });
         }
-      "),
-          
-          # highlight active row; embed active row value from R
-          drawCallback = JS(sprintf("
-        function(settings) {
-          var api = new $.fn.dataTable.Api(settings);
-          var active = %d;
-
-          api.rows().every(function(rowIdx) {
-            var tr = this.node();
-            if ((rowIdx + 1) === active) $(tr).addClass('active-row');
-            else $(tr).removeClass('active-row');
-          });
-        }
-      ", active))
+      ")
         )
       )
+    }, server = TRUE)
+    
+    
+    # Update DT via proxy ONLY after DT exists on client
+    observeEvent(list(cpt(), current_row(), input$cpt_table_rows_current), {
+      req(cpt())
+      req(!is.null(input$cpt_table_rows_current))  # DT is ready
       
-      dt
-    })
+      df <- cpt()
+      
+      sc <- state_cols()
+      prob_names <- character(0)
+      if (cpt_type() == "with_parents" && length(sc) > 0) prob_names <- names(df)[sc]
+      if (cpt_type() == "no_parents" && "Probability" %in% names(df)) prob_names <- "Probability"
+      
+      df_show <- df
+      if (length(prob_names) > 0) df_show[, prob_names] <- round(df_show[, prob_names], 2)
+      
+      df_show <- sanitize_for_dt(df_show)
+      names(df_show) <- make.unique(names(df_show))
+      
+      tryCatch({
+        DT::replaceData(cpt_proxy, df_show, resetPaging = FALSE, rownames = FALSE)
+      }, error = function(e) {
+        message("replaceData() failed: ", conditionMessage(e))
+      })
+      
+      session$sendCustomMessage("activeRow", list(row = current_row()))
+    }, ignoreInit = TRUE)
+    
     
     
     # ---- Save ----
