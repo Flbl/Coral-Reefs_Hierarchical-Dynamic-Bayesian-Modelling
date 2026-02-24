@@ -304,6 +304,7 @@ run_cpt_app <- function(pathProCpt,
         hr(),
         uiOutput("sliders_ui"),
         hr(),
+        uiOutput("row_sum_indicator"),
         tags$h4("Monotone CPT generator"),
         uiOutput("mono_weights_ui"),
         uiOutput("mono_scores_ui"),
@@ -328,24 +329,40 @@ run_cpt_app <- function(pathProCpt,
           }
         ")),
         tags$script(HTML("
-        Shiny.addCustomMessageHandler('activeRow', function(message) {
-          var active = message.row;
-      
-          var $tbl = $('#cpt_table table');
-          if ($tbl.length === 0) return;
-      
-          // IMPORTANT: do NOT initialize DataTables here
-          if (!$.fn.dataTable.isDataTable($tbl)) return;
-      
-          var table = $tbl.DataTable();
-      
-          table.rows().every(function(rowIdx) {
-            var tr = this.node();
-            if ((rowIdx + 1) === active) $(tr).addClass('active-row');
-            else $(tr).removeClass('active-row');
+        (function() {
+        
+          function applyHighlight(activeId) {
+            var $tbl = $('#cpt_table table');
+            if ($tbl.length === 0) return;
+            if (!$.fn.dataTable.isDataTable($tbl)) return;
+        
+            var table = $tbl.DataTable();
+        
+            table.rows().every(function() {
+              var d = this.data();
+              var rid = parseInt(d[0]); // hidden .row_id
+              var tr = this.node();
+              if (rid === activeId) $(tr).addClass('active-row');
+              else $(tr).removeClass('active-row');
+            });
+          }
+        
+          // Store current active id in window scope
+          window.__activeRowId = 1;
+        
+          // Re-apply highlight after every draw/redraw
+          $(document).on('draw.dt', '#cpt_table table', function() {
+            applyHighlight(window.__activeRowId);
           });
-        });
-      "))
+        
+          // Receive updates from Shiny
+          Shiny.addCustomMessageHandler('activeRow', function(message) {
+            window.__activeRowId = parseInt(message.row_id);
+            applyHighlight(window.__activeRowId);
+          });
+        
+        })();
+        "))
       ),
       
       mainPanel(
@@ -407,7 +424,7 @@ run_cpt_app <- function(pathProCpt,
     
     # Making the active row available to javascript
     observe({
-      session$sendCustomMessage("activeRow", list(row = current_row()))
+      session$sendCustomMessage("activeRow", list(row_id = current_row()))
     })
     
     # ----- Helper functions to destroy observers
@@ -964,6 +981,35 @@ run_cpt_app <- function(pathProCpt,
     })
     
     
+    output$row_sum_indicator <- renderUI({
+      req(cpt())
+      
+      df <- cpt()
+      sc <- state_cols()
+      
+      # Determine the probability vector for the current selection
+      probs <- if (cpt_type() == "no_parents") {
+        as.numeric(df$Probability)
+      } else {
+        row <- current_row()
+        as.numeric(df[row, sc])
+      }
+      
+      s <- sum(probs, na.rm = TRUE)
+      ok <- isTRUE(all.equal(s, 1, tolerance = 1e-8))
+      
+      col <- if (ok) "#2E7D32" else "#C62828"
+      txt <- if (ok) sprintf("Row probability sum: %.6f ✓", s) else sprintf("Row probability sum: %.6f ✗ (should be 1)", s)
+      
+      tags$div(
+        style = paste0(
+          "padding:8px 10px; border-radius:6px; font-weight:600; color:white; ",
+          "background:", col, "; margin-top:6px; margin-bottom:6px;"
+        ),
+        txt
+      )
+    })
+    
   
     observeEvent(current_row(), {
       req(!is.null(lock_store()))
@@ -1087,29 +1133,34 @@ run_cpt_app <- function(pathProCpt,
       df_show <- sanitize_for_dt(df_show)
       names(df_show) <- make.unique(names(df_show))   # avoid duplicate names
       
+      # Add row ID (possibly add it directly in CPT generation?)
+      df_show <- cbind(.row_id = seq_len(nrow(df_show)), df_show)
+      
       datatable(
         df_show,
         selection = "none",
         rownames = FALSE,
         options = list(
           pageLength = 100,
+          columnDefs = list(list(targets = 0, visible = FALSE, searchable = FALSE)),
           rowCallback = JS("
-        function(row, data, index) {
-          $(row).off('dblclick');
-          $(row).on('dblclick', function() {
-            Shiny.setInputValue('table_dblclick_row', index + 1, {priority: 'event'});
-          });
-        }
-      ")
+            function(row, data, index) {
+              $(row).off('dblclick');
+              $(row).on('dblclick', function() {
+                // data[0] is hidden .row_id
+                Shiny.setInputValue('table_dblclick_row', parseInt(data[0]), {priority: 'event'});
+              });
+            }
+          ")
         )
       )
     }, server = TRUE)
     
     
     # Update DT via proxy ONLY after DT exists on client
-    observeEvent(list(cpt(), current_row(), input$cpt_table_rows_current), {
+    observeEvent(list(cpt(), input$cpt_table_rows_current), {
       req(cpt())
-      req(!is.null(input$cpt_table_rows_current))  # DT is ready
+      req(!is.null(input$cpt_table_rows_current))
       
       df <- cpt()
       
@@ -1124,13 +1175,10 @@ run_cpt_app <- function(pathProCpt,
       df_show <- sanitize_for_dt(df_show)
       names(df_show) <- make.unique(names(df_show))
       
-      tryCatch({
-        DT::replaceData(cpt_proxy, df_show, resetPaging = FALSE, rownames = FALSE)
-      }, error = function(e) {
-        message("replaceData() failed: ", conditionMessage(e))
-      })
+      # add stable id
+      df_show <- cbind(.row_id = seq_len(nrow(df_show)), df_show)
       
-      session$sendCustomMessage("activeRow", list(row = current_row()))
+      DT::replaceData(cpt_proxy, df_show, resetPaging = FALSE, rownames = FALSE)
     }, ignoreInit = TRUE)
     
     
