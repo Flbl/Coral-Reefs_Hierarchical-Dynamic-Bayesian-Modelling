@@ -6,15 +6,8 @@
 #                                                                                           #
 #############################################################################################
 
-
-
 library(shiny)
 library(DT)
-
-# dir.create(file.path(pathProCpt,"00_ManualShinyExportsTest"), showWarnings = FALSE)
-
-# folder = "01_CPT"
-
 
 # =========================
 # Utility functions
@@ -28,7 +21,6 @@ detect_cpt_type <- function(df) {
   }
 }
 
-
 # This gets the index of the column, not the column name itself...
 get_state_columns <- function(df) {
   res <- grep("^P_", names(df))
@@ -38,161 +30,180 @@ get_state_columns <- function(df) {
   res
 }
 
+PROB_STEP   <- 0.01
+PROB_MIN    <- PROB_STEP                 # enforce min prob 0.01
+TOTAL_UNITS <- round(1 / PROB_STEP)      # 100
 
-PROB_STEP <- 0.01
-TOTAL_UNITS <- round(1 / PROB_STEP)  # 100
-
+# Snap any probability vector to the grid with min PROB_MIN and exact sum 1.
+# Useful to "clean" imported CPTs that contain 1/3, etc.
+snap_probs_to_grid <- function(probs, step = PROB_STEP, min_prob = PROB_MIN) {
+  probs <- as.numeric(probs)
+  K <- length(probs)
+  if (K == 0) return(probs)
+  
+  # Replace NA/Inf with min_prob
+  probs[!is.finite(probs)] <- min_prob
+  
+  # Clamp to [min_prob, 1]
+  probs <- pmax(probs, min_prob)
+  probs <- pmin(probs, 1)
+  
+  # Convert to units, enforce min 1 unit each, enforce sum=TOTAL_UNITS
+  U <- round(probs / step)
+  U[U < 1] <- 1
+  
+  # If sum too big, remove units from largest entries
+  while (sum(U) > TOTAL_UNITS) {
+    j <- which.max(U)
+    if (U[j] <= 1) break
+    U[j] <- U[j] - 1L
+  }
+  
+  # If sum too small, add units to largest entry (or any entry)
+  while (sum(U) < TOTAL_UNITS) {
+    j <- which.max(U)
+    U[j] <- U[j] + 1L
+  }
+  
+  U * step
+}
 
 # The renormalise function for keeping 0-1 between states when modifying a cursor
-renormalise <- function(probs, locked, changed, new_value,
-                        step = PROB_STEP) {
+# Enforces:
+#   - grid 0.01
+#   - min prob 0.01 for every unlocked state
+#   - sum exactly 1.00 on grid
+renormalise <- function(probs, locked, changed, new_value, step = PROB_STEP) {
   
   n <- length(probs)
   locked <- as.logical(locked)
-  
   total_units <- round(1 / step)
   
-  # Convert probabilities to integer units
+  probs <- as.numeric(probs)
+  probs[!is.finite(probs)] <- step
+  
+  # integer units (grid)
   units <- round(probs / step)
   
-  # Units locked elsewhere
-  locked_others <- locked & seq_len(n) != changed
+  idx_all <- seq_len(n)
+  locked_others <- locked & idx_all != changed
+  free_idx <- which(!locked & idx_all != changed)
+  
+  # Minimum units: 1 for any unlocked state (including changed if not locked)
+  min_units <- rep(0L, n)
+  min_units[which(!locked)] <- 1L
+  
   used_units_locked <- sum(units[locked_others])
   
-  # Max units allowed for changed index
-  max_units_changed <- max(0, total_units - used_units_locked)
+  # Minimum required for everyone except changed
+  min_required_except_changed <- sum(min_units[idx_all != changed])
   
-  # Clamp changed value to feasible units
-  units[changed] <- min(
-    max(round(new_value / step), 0),
-    max_units_changed
-  )
+  # Max feasible for changed
+  max_units_changed <- total_units - used_units_locked - min_required_except_changed
+  max_units_changed <- max(max_units_changed, min_units[changed]) # ensure >= min
   
-  # Remaining units to distribute
-  remaining_units <- total_units - used_units_locked - units[changed]
+  # Clamp changed to [min, max]
+  target_units_changed <- round(new_value / step)
+  target_units_changed <- max(target_units_changed, min_units[changed])
+  target_units_changed <- min(target_units_changed, max_units_changed)
   
-  # Free indices
-  free_idx <- which(!locked & seq_len(n) != changed)
+  units[changed] <- target_units_changed
   
-  if (length(free_idx) == 0 || remaining_units <= 0) {
-    return(units * step)
-  }
+  # Start free states at min
+  units[free_idx] <- min_units[free_idx]
   
-  # Current weights (use previous units, but non-negative)
-  w <- pmax(units[free_idx], 0)
-  sw <- sum(w)
+  # Remaining units to distribute among free states
+  remaining_units <- total_units - used_units_locked - units[changed] - sum(units[free_idx])
   
-  if (sw == 0) {
-    # Uniform integer allocation
-    base <- remaining_units %/% length(free_idx)
-    extra <- remaining_units %% length(free_idx)
+  if (length(free_idx) > 0 && remaining_units > 0) {
+    # weights above minimum from old probs
+    w <- pmax(round(probs[free_idx] / step) - min_units[free_idx], 0L)
+    sw <- sum(w)
     
-    units[free_idx] <- base
-    if (extra > 0) {
-      units[free_idx][seq_len(extra)] <-
-        units[free_idx][seq_len(extra)] + 1
-    }
-  } else {
-    # Proportional allocation in integer units
-    alloc <- floor(w / sw * remaining_units)
-    remainder <- remaining_units - sum(alloc)
-    
-    units[free_idx] <- alloc
-    
-    if (remainder > 0) {
-      # Distribute remaining units deterministically
-      order_idx <- order(-w)
-      units[free_idx][order_idx[seq_len(remainder)]] <-
-        units[free_idx][order_idx[seq_len(remainder)]] + 1
+    if (sw == 0) {
+      base <- remaining_units %/% length(free_idx)
+      extra <- remaining_units %% length(free_idx)
+      units[free_idx] <- units[free_idx] + base
+      if (extra > 0) units[free_idx][seq_len(extra)] <- units[free_idx][seq_len(extra)] + 1L
+    } else {
+      alloc <- floor(w / sw * remaining_units)
+      rem <- remaining_units - sum(alloc)
+      units[free_idx] <- units[free_idx] + alloc
+      if (rem > 0) {
+        ord <- order(-w)
+        units[free_idx][ord[seq_len(rem)]] <- units[free_idx][ord[seq_len(rem)]] + 1L
+      }
     }
   }
   
-  # Convert back to probabilities
+  # Final exact sum correction (adjust a free state if possible, otherwise changed)
+  diff <- total_units - sum(units)
+  if (diff != 0) {
+    if (length(free_idx) > 0) {
+      j <- free_idx[1]
+      units[j] <- units[j] + diff
+      if (units[j] < min_units[j]) {
+        # fallback: push back to min and adjust changed
+        d2 <- min_units[j] - units[j]
+        units[j] <- min_units[j]
+        units[changed] <- units[changed] - d2
+      }
+    } else {
+      units[changed] <- units[changed] + diff
+    }
+  }
+  
+  # Guarantee mins again
+  units[which(!locked)] <- pmax(units[which(!locked)], 1L)
+  
+  # Guarantee sum again
+  diff2 <- total_units - sum(units)
+  if (diff2 != 0) {
+    j <- which(!locked)[1]
+    units[j] <- units[j] + diff2
+  }
+  
   units * step
 }
 
-
 # Monotone CPT generation
-# Safe cleaning for display / matching
 .clean_txt <- function(x) trimws(gsub("_+", " ", as.character(x)))
 
-
-# Default score vector for an ordered factor/character vector of levels
-# Example: 5 levels -> -2,-1,0,1,2 ; 3 levels -> -1,0,1 ; 4 levels -> -1.5,-0.5,0.5,1.5
 .default_scores <- function(levels_vec) {
   m <- length(levels_vec)
   seq(-(m - 1) / 2, (m - 1) / 2, length.out = m)
 }
 
-
-# Extract CPT structure: parent columns and child probability columns (P_*), and child state names
 infer_cpt_structure <- function(df) {
   child_cols <- grep("^P_", names(df))
-  if (length(child_cols) == 0) {
-    stop("Expected P_* columns for a with-parents CPT.")
-  }
+  if (length(child_cols) == 0) stop("Expected P_* columns for a with-parents CPT.")
   parent_cols <- setdiff(seq_along(df), child_cols)
-  
   child_states <- sub("^P_", "", names(df)[child_cols])
   list(parent_cols = parent_cols, child_cols = child_cols, child_states = child_states)
 }
 
-
-# /!\ A RULE FOR BELOW ORDINAL/GAUSSIAN FITTING TO WORK:
-# CPTs HAVE TO BE ORDERED IN THEIR STATE COMBINATION 
-# (1: its easier for expert elicitation, 2: The function makes a curve inside the table so it has to be ordered)
-
-# Method 1: ordinal cumulative logit (proportional odds)
-# Higher score -> distribution shifts stochastically to higher categories
 .probs_ordinal_logit <- function(score, K, temperature = 1, cut_span = 2.0) {
-  # temperature > 0 ; smaller => sharper
   temperature <- max(1e-6, temperature)
-  
-  # cutpoints (K-1) equally spaced
   theta <- seq(-cut_span, cut_span, length.out = K - 1)
-  
-  # latent mean increases with score
   mu <- score / temperature
-  
-  # cumulative probabilities P(Y <= k)
   cum <- plogis(theta - mu)
   
   p <- numeric(K)
   p[1] <- cum[1]
-  if (K > 2) {
-    for (k in 2:(K - 1)) p[k] <- cum[k] - cum[k - 1]
-  }
+  if (K > 2) for (k in 2:(K - 1)) p[k] <- cum[k] - cum[k - 1]
   p[K] <- 1 - cum[K - 1]
   pmax(p, 0)
 }
 
-
-# Method 2: Gaussian-like kernel around a score-dependent "center" index
-# Center moves monotonically with score; sigma controlled by temperature
 .probs_gaussian_center <- function(score, K, temperature = 1) {
   temperature <- max(1e-6, temperature)
-  
-  # Map score -> center in [1, K] via logistic
   center <- 1 + (K - 1) * plogis(score / temperature)
-  
-  # sigma: smaller temperature -> sharper peak
   sigma <- max(1e-3, temperature)
-  
   idx <- seq_len(K)
   w <- exp(-0.5 * ((idx - center) / sigma)^2)
   w / sum(w)
 }
 
-
-
-# Main builder
-# df: existing CPT data.frame (with parents, wide P_* columns)
-# parent_scores: named list, one entry per parent column name. Each entry is a named numeric vector mapping state -> score
-# parent_weights: named numeric vector, per parent column name
-# method: "ordinal_logit" or "gaussian_center" or "coarse"
-# temperature: >0 ; smaller => sharper
-# floor: minimum probability mass per child state (smoothness)
-# returns: df with same parent columns + regenerated P_* columns
 build_monotone_cpt <- function(df,
                                parent_scores = NULL,
                                parent_weights = NULL,
@@ -204,33 +215,27 @@ build_monotone_cpt <- function(df,
   st <- infer_cpt_structure(df)
   parent_cols <- st$parent_cols
   child_cols  <- st$child_cols
-  child_states <- st$child_states
   K <- length(child_cols)
   
   parent_names <- names(df)[parent_cols]
   
-  # Defaults
   if (is.null(parent_weights)) {
     parent_weights <- setNames(rep(1, length(parent_names)), parent_names)
   } else {
-    # ensure all parents present
     missing <- setdiff(parent_names, names(parent_weights))
     if (length(missing) > 0) parent_weights[missing] <- 1
     parent_weights <- parent_weights[parent_names]
   }
   
   if (is.null(parent_scores)) {
-    # default based on factor levels if available, else unique order in data
     parent_scores <- lapply(parent_names, function(pn) {
       v <- df[[pn]]
       levs <- if (is.factor(v)) levels(v) else unique(as.character(v))
       levs <- as.character(levs)
-      sc <- .default_scores(levs)
-      setNames(sc, levs)
+      setNames(.default_scores(levs), levs)
     })
     names(parent_scores) <- parent_names
   } else {
-    # ensure all parents present
     missing <- setdiff(parent_names, names(parent_scores))
     if (length(missing) > 0) {
       for (pn in missing) {
@@ -242,8 +247,6 @@ build_monotone_cpt <- function(df,
     parent_scores <- parent_scores[parent_names]
   }
   
-  
-  # Build total score per row
   total_score <- numeric(nrow(df))
   for (pn in parent_names) {
     w <- as.numeric(parent_weights[pn])
@@ -254,20 +257,17 @@ build_monotone_cpt <- function(df,
     total_score <- total_score + w * as.numeric(sc)
   }
   
-  # Generate probs row-wise
   P <- matrix(0, nrow(df), K)
   for (i in seq_len(nrow(df))) {
     s <- total_score[i]
-    if (method == "ordinal_logit") {
-      p <- .probs_ordinal_logit(s, K, temperature = temperature)
-    } else {
-      p <- .probs_gaussian_center(s, K, temperature = temperature)
-    }
-    
-    # smoothness floor, renormalize
+    p <- if (method == "ordinal_logit") .probs_ordinal_logit(s, K, temperature = temperature) else .probs_gaussian_center(s, K, temperature = temperature)
     p <- pmax(p, 0)
     p <- p + floor
     p <- p / sum(p)
+    
+    # IMPORTANT: snap monotone output to your grid + min=0.01
+    p <- snap_probs_to_grid(p, step = PROB_STEP, min_prob = PROB_MIN)
+    
     P[i, ] <- p
   }
   
@@ -276,11 +276,6 @@ build_monotone_cpt <- function(df,
   out
 }
 
-
-
-
-
-
 # =========================
 # UI
 # =========================
@@ -288,10 +283,7 @@ build_monotone_cpt <- function(df,
 run_cpt_app <- function(pathProCpt,
                         folder = "01_CPT",
                         cpt_patterns = NULL) {
-  # cpt_patterns: NULL = no filter
-  # or character vector of regex patterns (OR-ed)
-  # example: cpt_patterns = c("CPT__Site_", "CPT__Env_")
-
+  
   ui <- fluidPage(
     
     titlePanel("Bayesian Network CPT Editor"),
@@ -314,30 +306,30 @@ run_cpt_app <- function(pathProCpt,
                     selected = "gaussian_center"),
         sliderInput("mono_temp", "Temperature / sharpness",
                     min = 0.1, max = 5, value = 1, step = 0.1),
-        # sliderInput(
-        #   "mono_cutspan", "Cut-span (ordinal logit separation)",
-        #   min = 0.5, max = 6, value = 3, step = 0.1
-        # ),
         numericInput("mono_floor", "Smoothness floor", value = 0.01, min = 0, step = 0.01),
         actionButton("apply_monotone", "Apply monotone CPT", class = "btn-primary"),
         hr(),
         actionButton("save", "Save CPT"),
         actionButton("quit", "Quit"),
         tags$style(HTML("
+          tr.bad-row td {
+            background-color: #f8d7da !important;
+          }
           tr.active-row td {
             background-color: #5485b0 !important;
+            color: white !important;
           }
         ")),
         tags$script(HTML("
         (function() {
-        
+
           function applyHighlight(activeId) {
             var $tbl = $('#cpt_table table');
             if ($tbl.length === 0) return;
             if (!$.fn.dataTable.isDataTable($tbl)) return;
-        
+
             var table = $tbl.DataTable();
-        
+
             table.rows().every(function() {
               var d = this.data();
               var rid = parseInt(d[0]); // hidden .row_id
@@ -346,21 +338,18 @@ run_cpt_app <- function(pathProCpt,
               else $(tr).removeClass('active-row');
             });
           }
-        
-          // Store current active id in window scope
+
           window.__activeRowId = 1;
-        
-          // Re-apply highlight after every draw/redraw
+
           $(document).on('draw.dt', '#cpt_table table', function() {
             applyHighlight(window.__activeRowId);
           });
-        
-          // Receive updates from Shiny
+
           Shiny.addCustomMessageHandler('activeRow', function(message) {
             window.__activeRowId = parseInt(message.row_id);
             applyHighlight(window.__activeRowId);
           });
-        
+
         })();
         "))
       ),
@@ -379,10 +368,9 @@ run_cpt_app <- function(pathProCpt,
   
   server <- function(input, output, session) {
     
-    cpt_dir <- file.path(pathProCpt, folder) #"Data/01_Processed/CPT" #pathProCpt # TO CHANGE TO MAKE PROMPT FROM OTHER SCRIPTS
-    if (!dir.exists(cpt_dir)) {
-      stop(paste("CPT directory does not exist:", cpt_dir))
-    }
+    cpt_dir <- file.path(pathProCpt, folder)
+    if (!dir.exists(cpt_dir)) stop(paste("CPT directory does not exist:", cpt_dir))
+    
     updating <- reactiveVal(FALSE)
     
     observe({
@@ -398,48 +386,53 @@ run_cpt_app <- function(pathProCpt,
         return()
       }
       
-      # keep current selection if still available
       sel <- isolate(input$cpt_file)
       if (is.null(sel) || !(sel %in% files)) sel <- files[1]
-      
       updateSelectInput(session, "cpt_file", choices = files, selected = sel)
     })
     
-    
     cpt <- reactiveVal(NULL)
-    cpt_type <- reactiveVal("with_parents") #safe default
+    cpt_type <- reactiveVal("with_parents")
     state_cols <- reactiveVal(integer(0))
-    # locked <- reactiveVal(logical(0))
-
-    lock_store <- reactiveVal(NULL) # will hold a matrix (rows x states) or a vector
-    obs_inited <- reactiveVal(FALSE)  # ensures we don't create duplicate observers # becomes irrelevant
+    
+    lock_store <- reactiveVal(NULL)
     current_row <- reactiveVal(1)
     
-    # ---- NEW: keep handles to destroy old observers (prevents session slowdown)
     slider_obs <- reactiveVal(list())
     lock_obs   <- reactiveVal(NULL)
     
-    # ---- NEW: DT proxy (avoid full DT rebuild each time cpt() changes)
     cpt_proxy <- DT::dataTableProxy("cpt_table")
     
-    # Making the active row available to javascript
+    # --- bad row flags: OFF-GRID IS BAD (your requirement)
+    row_bad_flags <- function(df, cpt_type, state_cols, step = PROB_STEP) {
+      if (cpt_type != "with_parents") return(rep(FALSE, nrow(df)))
+      sc <- state_cols
+      K <- length(sc)
+      if (K == 0) return(rep(FALSE, nrow(df)))
+      
+      P <- as.matrix(df[, sc, drop = FALSE])
+      storage.mode(P) <- "numeric"
+      
+      bad_num <- apply(P, 1, function(x) any(!is.finite(x)))
+      bad_range <- apply(P, 1, function(x) any(x < step | x > 1))
+      
+      U <- round(P / step)
+      bad_grid <- apply(U, 1, function(u) any(u < 1) || sum(u) != TOTAL_UNITS)
+      
+      bad_num | bad_range | bad_grid
+    }
+    
     observe({
       session$sendCustomMessage("activeRow", list(row_id = current_row()))
     })
     
-    # ----- Helper functions to destroy observers
     destroy_observers <- function() {
-      # destroy slider observers
       old <- slider_obs()
       if (length(old) > 0) {
-        lapply(old, function(h) {
-          try(h$destroy(), silent = TRUE)
-          NULL
-        })
+        lapply(old, function(h) { try(h$destroy(), silent = TRUE); NULL })
       }
       slider_obs(list())
       
-      # destroy lock observer
       lo <- lock_obs()
       if (!is.null(lo)) {
         try(lo$destroy(), silent = TRUE)
@@ -448,11 +441,8 @@ run_cpt_app <- function(pathProCpt,
     }
     
     make_slider_observers <- function() {
-      req(cpt())
-      req(cpt_type())
-      req(!is.null(lock_store()))
+      req(cpt(), cpt_type(), !is.null(lock_store()))
       
-      # IMPORTANT: remove previous observers
       destroy_observers()
       
       df <- cpt()
@@ -468,20 +458,19 @@ run_cpt_app <- function(pathProCpt,
           
           handles[[idx]] <<- observeEvent(input[[paste0("p_", idx)]], {
             if (updating()) return()
+            
             df <- cpt()
             row <- current_row()
             sc  <- state_cols()
             
             n_controls2 <- if (cpt_type() == "no_parents") nrow(df) else length(sc)
             
-            # read locks from UI
             lock_vals <- vapply(
               seq_len(n_controls2),
               function(k) isTRUE(input[[paste0("lock_", k)]]),
               logical(1)
             )
             
-            # persist locks
             ls <- lock_store()
             if (cpt_type() == "no_parents") {
               lock_store(lock_vals)
@@ -490,21 +479,21 @@ run_cpt_app <- function(pathProCpt,
               lock_store(ls)
             }
             
-            # current probs for this row
             old_probs <- if (cpt_type() == "no_parents") {
               as.numeric(df$Probability)
             } else {
               as.numeric(df[row, sc])
             }
             
-            # clamp changed slider against locked mass
+            # Clamp max so that every OTHER unlocked state can still be >= 0.01
             sum_locked_other <- sum(old_probs[lock_vals & seq_along(old_probs) != idx])
-            max_allowed <- max(0, 1 - sum_locked_other)
+            min_mass_free_others <- sum((!lock_vals) & seq_along(old_probs) != idx) * PROB_STEP
+            max_allowed <- max(0, 1 - sum_locked_other - min_mass_free_others)
+            max_allowed <- max(max_allowed, PROB_STEP) # idx itself must be >= 0.01
             
             new_value_raw <- as.numeric(input[[paste0("p_", idx)]])
-            new_value <- min(max(new_value_raw, 0), max_allowed)
+            new_value <- min(max(new_value_raw, PROB_STEP), max_allowed)
             
-            # snap only this slider if infeasible
             if (!isTRUE(all.equal(new_value, new_value_raw))) {
               updating(TRUE)
               on.exit(updating(FALSE), add = TRUE)
@@ -521,7 +510,6 @@ run_cpt_app <- function(pathProCpt,
               new_value = new_value
             )
             
-            # write back only to current row
             if (cpt_type() == "no_parents") {
               df$Probability <- new_probs
             } else {
@@ -529,7 +517,6 @@ run_cpt_app <- function(pathProCpt,
             }
             cpt(df)
             
-            # update other sliders only
             for (j in seq_along(new_probs)) {
               if (j != idx) updateSliderInput(session, paste0("p_", j), value = new_probs[j])
             }
@@ -539,7 +526,6 @@ run_cpt_app <- function(pathProCpt,
       
       slider_obs(handles)
       
-      # ---- Lock checkbox observer (single) — recreated each time because n_controls can change
       lo <- observeEvent({
         df <- cpt()
         sc <- state_cols()
@@ -570,54 +556,37 @@ run_cpt_app <- function(pathProCpt,
       lock_obs(lo)
     }
     
-    # Function to sanitize df_show before datatable() and before replaceData()
     sanitize_for_dt <- function(df) {
       df <- as.data.frame(df, stringsAsFactors = FALSE, check.names = FALSE)
-      
       df[] <- lapply(df, function(col) {
         if (is.factor(col)) col <- as.character(col)
-        
-        # POSIXlt is notorious in JSON
         if (inherits(col, "POSIXlt")) col <- as.character(col)
-        
-        # list columns will break DT JSON
         if (is.list(col)) col <- vapply(col, function(x) paste(x, collapse = ","), character(1))
-        
-        if (is.numeric(col)) {
-          col[!is.finite(col)] <- NA_real_
-        }
+        if (is.numeric(col)) col[!is.finite(col)] <- NA_real_
         col
       })
       df
     }
     
-    # ---- Monotone UI: weights + scores (only when CPT has parents)
+    # ---- Monotone UI: weights + scores
     output$mono_weights_ui <- renderUI({
-      req(cpt())
-      req(cpt_type())
+      req(cpt(), cpt_type())
       if (cpt_type() != "with_parents") return(NULL)
-      
       st <- infer_cpt_structure(cpt())
-      parent_cols <- st$parent_cols
-      parent_names <- names(cpt())[parent_cols]
-      
+      parent_names <- names(cpt())[st$parent_cols]
       tagList(
         tags$h5("Parent weights"),
-        lapply(parent_names, function(pn) {
-          numericInput(paste0("w_", pn), label = pn, value = 1, step = 0.1)
-        })
+        lapply(parent_names, function(pn) numericInput(paste0("w_", pn), label = pn, value = 1, step = 0.1))
       )
     })
     
     output$mono_scores_ui <- renderUI({
-      req(cpt())
-      req(cpt_type())
+      req(cpt(), cpt_type())
       if (cpt_type() != "with_parents") return(NULL)
       
       df <- cpt()
       st <- infer_cpt_structure(df)
-      parent_cols <- st$parent_cols
-      parent_names <- names(df)[parent_cols]
+      parent_names <- names(df)[st$parent_cols]
       
       tagList(
         tags$h5("Parent state scores"),
@@ -643,8 +612,7 @@ run_cpt_app <- function(pathProCpt,
     })
     
     observeEvent(input$apply_monotone, {
-      req(cpt())
-      req(cpt_type())
+      req(cpt(), cpt_type())
       if (cpt_type() != "with_parents") {
         showNotification("Monotone generator applies to CPTs with parents (P_* columns).", type = "warning")
         return()
@@ -652,17 +620,14 @@ run_cpt_app <- function(pathProCpt,
       
       df <- cpt()
       st <- infer_cpt_structure(df)
-      parent_cols <- st$parent_cols
-      parent_names <- names(df)[parent_cols]
+      parent_names <- names(df)[st$parent_cols]
       
-      # collect weights
       w <- setNames(rep(1, length(parent_names)), parent_names)
       for (pn in parent_names) {
         val <- input[[paste0("w_", pn)]]
         if (!is.null(val)) w[pn] <- as.numeric(val)
       }
       
-      # collect scores
       parent_scores <- list()
       for (pn in parent_names) {
         v <- df[[pn]]
@@ -686,63 +651,55 @@ run_cpt_app <- function(pathProCpt,
         floor = input$mono_floor
       )
       
-      # Replace CPT + reset locks for safety
       cpt(new_df)
-      state_cols(get_state_columns(new_df)) # unchanged but safe
+      state_cols(get_state_columns(new_df))
       lock_store(matrix(FALSE, nrow = nrow(new_df), ncol = length(st$child_cols)))
-      obs_inited(FALSE)
       showNotification("Monotone CPT applied. You can now tweak row-wise.", type = "message")
       
-      # Destroy observers
       destroy_observers()
       make_slider_observers()
-      
     })
-    
     
     # ---- Load CPT ----
     observeEvent(input$cpt_file, {
       req(input$cpt_file)
       
-      df <- read.csv(
-        file.path(cpt_dir, input$cpt_file),
-        stringsAsFactors = FALSE
-      )
+      df <- read.csv(file.path(cpt_dir, input$cpt_file), stringsAsFactors = FALSE)
+      
+      # IMPORTANT: snap imported CPTs to grid+min so "1/3" becomes e.g. 0.34/0.33/0.33
+      ct <- detect_cpt_type(df)
+      sc <- get_state_columns(df)
+      if (ct == "with_parents" && length(sc) > 0) {
+        for (r in seq_len(nrow(df))) {
+          df[r, sc] <- snap_probs_to_grid(df[r, sc], step = PROB_STEP, min_prob = PROB_MIN)
+        }
+      } else if (ct == "no_parents" && "Probability" %in% names(df)) {
+        df$Probability <- snap_probs_to_grid(df$Probability, step = PROB_STEP, min_prob = PROB_MIN)
+      }
       
       cpt(df)
-      cpt_type(detect_cpt_type(df))
-      state_cols(get_state_columns(df))
-      # locked(rep(FALSE, length(state_cols())))
+      cpt_type(ct)
+      state_cols(sc)
+      
       if (cpt_type() == "no_parents") {
-        lock_store(rep(FALSE, nrow(df)))           # one lock per row-state
+        lock_store(rep(FALSE, nrow(df)))
       } else {
         n_states <- length(state_cols())
         lock_store(matrix(FALSE, nrow = nrow(df), ncol = n_states))
       }
-      # destroy and rebuild observers for the new UI structure
+      
       destroy_observers()
-      obs_inited(FALSE)
       current_row(1)
-      # build fresh observers for the freshly-rendered sliders/locks (after cpt()/lock_store() are set)
       make_slider_observers()
     })
     
-    
-    # ---- Row selector (only if parents exist) ----
+    # ---- Row selector ----
     output$row_selector <- renderUI({
-      req(cpt())
-      req(current_row())
-      
+      req(cpt(), current_row())
       if (cpt_type() == "with_parents") {
-        numeric_cols <- state_cols()
-        parent_cols <- setdiff(seq_along(cpt()), numeric_cols)
-        
-        selectInput(
-          "row_id",
-          "Parent configuration (line)",
-          choices = seq_len(nrow(cpt())),
-          selected = current_row()
-        )
+        selectInput("row_id", "Parent configuration (line)",
+                    choices = seq_len(nrow(cpt())),
+                    selected = current_row())
       }
     })
     
@@ -751,73 +708,48 @@ run_cpt_app <- function(pathProCpt,
     })
     
     observeEvent(list(current_row(), cpt(), state_cols(), lock_store()), {
-      req(cpt())
-      # req(length(state_cols()) > 0)
-      req(!is.null(lock_store()))
+      req(cpt(), !is.null(lock_store()))
       
       df <- cpt()
       row <- current_row()
       sc  <- state_cols()
       
-      n_controls <- if (cpt_type() == "no_parents") nrow(df) else length(state_cols())
+      n_controls <- if (cpt_type() == "no_parents") nrow(df) else length(sc)
       req(n_controls > 0)
       
-      # pull probabilities for the row / vector
-      probs <- if (cpt_type() == "no_parents") {
-        as.numeric(df$Probability)
-      } else {
-        as.numeric(df[row, sc])
-      }
-      
-      # pull locks for this row
-      locks <- if (cpt_type() == "no_parents") {
-        lock_store()
-      } else {
-        lock_store()[row, ]
-      }
+      probs <- if (cpt_type() == "no_parents") as.numeric(df$Probability) else as.numeric(df[row, sc])
+      locks <- if (cpt_type() == "no_parents") lock_store() else lock_store()[row, ]
       
       updating(TRUE)
       on.exit(updating(FALSE), add = TRUE)
       
-      # update UI controls to reflect selected row
       for (i in seq_along(probs)) {
         updateSliderInput(session, paste0("p_", i), value = probs[i])
         updateCheckboxInput(session, paste0("lock_", i), value = isTRUE(locks[i]))
       }
     }, ignoreInit = TRUE)
     
-    # double click update of the row for parent configuration
     observeEvent(input$table_dblclick_row, {
       req(cpt_type())
       if (cpt_type() != "with_parents") return()
-      
       i <- as.integer(input$table_dblclick_row)
       if (is.na(i)) return()
-      
       current_row(i)
-      
-      # keep dropdown selector in sync
       updateSelectInput(session, "row_id", selected = i)
     })
     
-    # Parent question
+    # Parent question (unchanged)
     output$parent_question <- renderUI({
-      req(cpt())
-      req(cpt_type())
-      req(input$cpt_file)
+      req(cpt(), cpt_type(), input$cpt_file)
       
       df <- cpt()
-      
-      # Helper: clean display text
       clean <- function(x) trimws(gsub("_+", " ", as.character(x)))
       
-      # Infer child node name from filename (e.g., CPT__Site_.csv -> Site)
       child_node <- gsub("\\.csv$", "", input$cpt_file)
       child_node <- gsub("^CPT_+", "", child_node)
       child_node <- clean(child_node)
       if (nchar(child_node) == 0) child_node <- "the node"
       
-      # No-parents CPT: just show a simple prompt
       if (cpt_type() == "no_parents") {
         return(tags$div(
           style = "margin-top: 6px; margin-bottom: 6px;",
@@ -827,41 +759,25 @@ run_cpt_app <- function(pathProCpt,
         ))
       }
       
-      # With-parents CPT
       sc <- state_cols()
       row <- current_row()
-      
-      # Parent columns = all non-probability columns
       parent_cols <- setdiff(seq_along(df), sc)
       req(length(parent_cols) > 0)
       
       parent_names <- clean(names(df)[parent_cols])
-      # Secondary clean for parents for t-n
-      parent_names <- gsub(".","-", parent_names, fixed = TRUE)
+      parent_names <- gsub(".", "-", parent_names, fixed = TRUE)
       parent_vals  <- clean(df[row, parent_cols, drop = TRUE])
       
-      # --- Build a per-parent color map (unique values per parent column)
-      # pal <- palette.colors(palette = "Okabe-Ito")
       pal <- c("#0072B2", "#56B4E9", "#F0E442", "#E69F00", "#D55E00")
       
-      # For each parent column, map its unique values to palette colors
-      # parent_color_maps <- lapply(parent_cols, function(j) {
-      #   vals <- clean(df[[j]])
-      #   u <- unique(vals)
-      #   cols <- rep(pal, length.out = length(u))
-      #   stats::setNames(cols, u)
-      # })
       parent_color_maps <- lapply(parent_cols, function(j) {
         vals <- df[[j]]
-        # if it's a factor, use its defined level order; else use unique order
         u_ord <- if (is.factor(vals)) levels(vals) else unique(clean(vals))
         u_ord <- clean(u_ord)
-        
         cols <- pal[round(seq(1, length(pal), length.out = length(u_ord)))]
         stats::setNames(cols, u_ord)
       })
       
-      # Build condition fragments: "[Parent] is [Value]" with value colored
       cond_fragments <- lapply(seq_along(parent_cols), function(k) {
         p_name <- parent_names[k]
         p_val  <- parent_vals[k]
@@ -871,39 +787,28 @@ run_cpt_app <- function(pathProCpt,
         tags$span(
           style = "font-weight: bold;",
           tags$span(paste0(p_name, " is ")),
-          tags$span(
-            style = paste0("color:", colhex, ";"),
-            paste0(p_val)
-          )
+          tags$span(style = paste0("color:", colhex, ";"), paste0(p_val))
         )
       })
       
-      # Interleave " and " between fragments
       cond_with_and <- list()
       for (k in seq_along(cond_fragments)) {
         cond_with_and <- c(cond_with_and, list(cond_fragments[[k]]))
-        if (k < length(cond_fragments)) {
-          cond_with_and <- c(cond_with_and, list(tags$span(" and ")))
-        }
+        if (k < length(cond_fragments)) cond_with_and <- c(cond_with_and, list(tags$span(" and ")))
       }
       
       tags$div(
         style = "margin-top: 6px; margin-bottom: 6px;",
-        tags$span("When "),
-        cond_with_and,
+        tags$span("When "), cond_with_and,
         tags$span(", what is the probability that "),
         tags$span(style = "font-style: italic;", paste0("'", child_node, "'")),
         tags$span(" is:")
       )
     })
     
-    
     # ---- Sliders ----
     output$sliders_ui <- renderUI({
-      req(cpt())
-      req(cpt_type())
-      req(!is.null(lock_store()))
-      
+      req(cpt(), cpt_type(), !is.null(lock_store()))
       df <- cpt()
       
       if (cpt_type() == "no_parents") {
@@ -914,34 +819,14 @@ run_cpt_app <- function(pathProCpt,
         lapply(seq_along(probs), function(i) {
           tags$div(
             style = "margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #eee;",
-            
-            # State title
-            tags$div(
-              style = "font-weight: bold; margin-bottom: 4px; text-align: center;",
-              gsub("_"," ",state_names[i])
-            ),
-            
-            # Lock checkbox (label is always "Lock")
-            checkboxInput(
-              paste0("lock_", i),
-              label = "Lock",
-              value = isTRUE(locks[i])
-            ),
-            
-            # Slider
-            sliderInput(
-              paste0("p_", i),
-              label = NULL,
-              min = 0, max = 1, step = PROB_STEP,
-              value = probs[i]
-            )
+            tags$div(style = "font-weight: bold; margin-bottom: 4px; text-align: center;",
+                     gsub("_"," ",state_names[i])),
+            checkboxInput(paste0("lock_", i), label = "Lock", value = isTRUE(locks[i])),
+            sliderInput(paste0("p_", i), label = NULL, min = PROB_MIN, max = 1, step = PROB_STEP, value = probs[i])
           )
         })
-        
       } else {
-        # req(length(state_cols()) > 0)
-        
-        n_controls <- if (cpt_type() == "no_parents") nrow(df) else length(state_cols())
+        n_controls <- length(state_cols())
         req(n_controls > 0)
         
         row <- current_row()
@@ -954,32 +839,14 @@ run_cpt_app <- function(pathProCpt,
         lapply(seq_along(probs), function(i) {
           tags$div(
             style = "margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #eee;",
-            
-            # State title
-            tags$div(
-              style = "font-weight: bold; margin-bottom: 4px; text-align: center;",
-              gsub("_"," ",state_names[i])
-            ),
-            
-            # Lock checkbox (label is always "Lock")
-            checkboxInput(
-              paste0("lock_", i),
-              label = "Lock",
-              value = isTRUE(locks[i])
-            ),
-            
-            # Slider
-            sliderInput(
-              paste0("p_", i),
-              label = NULL,
-              min = 0, max = 1, step = PROB_STEP,
-              value = probs[i]
-            )
+            tags$div(style = "font-weight: bold; margin-bottom: 4px; text-align: center;",
+                     gsub("_"," ",state_names[i])),
+            checkboxInput(paste0("lock_", i), label = "Lock", value = isTRUE(locks[i])),
+            sliderInput(paste0("p_", i), label = NULL, min = PROB_MIN, max = 1, step = PROB_STEP, value = probs[i])
           )
         })
       }
     })
-    
     
     output$row_sum_indicator <- renderUI({
       req(cpt())
@@ -987,91 +854,55 @@ run_cpt_app <- function(pathProCpt,
       df <- cpt()
       sc <- state_cols()
       
-      # Determine the probability vector for the current selection
-      probs <- if (cpt_type() == "no_parents") {
-        as.numeric(df$Probability)
-      } else {
-        row <- current_row()
-        as.numeric(df[row, sc])
-      }
+      probs <- if (cpt_type() == "no_parents") as.numeric(df$Probability) else as.numeric(df[current_row(), sc])
+      U <- round(probs / PROB_STEP)
       
-      s <- sum(probs, na.rm = TRUE)
-      ok <- isTRUE(all.equal(s, 1, tolerance = 1e-8))
+      ok <- (sum(U) == TOTAL_UNITS) && all(U >= 1)
+      s <- sum(probs)
       
       col <- if (ok) "#2E7D32" else "#C62828"
-      txt <- if (ok) sprintf("Row probability sum: %.6f ✓", s) else sprintf("Row probability sum: %.6f ✗ (should be 1)", s)
+      txt <- if (ok) sprintf("Row sum: %.2f ✓ (grid OK)", s) else sprintf("Row sum: %.2f ✗ (must be grid-sum 1.00 and each ≥ 0.01)", s)
       
       tags$div(
-        style = paste0(
-          "padding:8px 10px; border-radius:6px; font-weight:600; color:white; ",
-          "background:", col, "; margin-top:6px; margin-bottom:6px;"
-        ),
+        style = paste0("padding:8px 10px; border-radius:6px; font-weight:600; color:white; ",
+                       "background:", col, "; margin-top:6px; margin-bottom:6px;"),
         txt
       )
     })
     
-  
-    observeEvent(current_row(), {
-      req(!is.null(lock_store()))
-      if (cpt_type() == "with_parents") {
-        ls <- lock_store()
-        ls[current_row(), ] <- FALSE
-        lock_store(ls)
-      } else {
-        df <- cpt()
-        lock_store(rep(FALSE, nrow(df)))
-      }
-    }, ignoreInit = TRUE)
-    
-    
     # ---- bar plot ----
     output$prob_bar <- renderPlot({
       req(cpt())
-      req(cpt_type())
-      req(length(state_cols()) > 0)
-      req(!is.null(lock_store()))
-      
       df <- cpt()
-      sc <- state_cols()
-      row <- current_row()
       
-      probs <- if (cpt_type() == "no_parents") {
-        as.numeric(df$Probability)
-      } else {
-        as.numeric(df[row, sc])
-      }
+      if (is.null(df)) return()
       
-      locks <- if (cpt_type() == "no_parents") {
-        as.logical(lock_store())
-      } else {
-        as.logical(lock_store()[row, ])
-      }
-      
-      # State names (strip P_)
       if (cpt_type() == "no_parents") {
+        req("Probability" %in% names(df), "State" %in% names(df))
+        probs <- as.numeric(df$Probability)
         state_names <- as.character(df$State)
       } else {
-        state_names <- names(df)[sc]
-        state_names <- sub("^P_", "", state_names)
+        sc <- state_cols()
+        req(length(sc) > 0)
+        probs <- as.numeric(df[current_row(), sc])
+        state_names <- sub("^P_", "", names(df)[sc])
       }
       
-      # Defensive normalization for plotting only
+      # Defensive cleanup (should already be grid-valid, but keep safe for plotting)
+      probs[!is.finite(probs)] <- 0
       probs <- pmax(probs, 0)
       s <- sum(probs)
-      if (s > 0) probs <- probs / s
+      if (s <= 0) return()
+      probs <- probs / s
       
-      # Accessible sequential ramp (good -> bad), Okabe-Ito inspired anchors
+      # Colors (same palette as before)
       ramp5 <- c("#0072B2", "#56B4E9", "#F0E442", "#E69F00", "#D55E00")
-      
       n_states <- length(probs)
-      ramp <- ramp5[round(seq(1, 5, length.out = n_states))]
-      cols <- ramp  # <- use column order as-is (good -> bad)
+      cols <- ramp5[round(seq(1, 5, length.out = n_states))]
       
-      # Compute cumulative positions for stacked bar
       lefts  <- c(0, cumsum(probs)[-length(probs)])
       rights <- cumsum(probs)
       
-      # Small margins for small height
       op <- par(mar = c(2.2, 1.0, 0.5, 0.5), xaxs = "i", yaxs = "i")
       on.exit(par(op), add = TRUE)
       
@@ -1080,91 +911,37 @@ run_cpt_app <- function(pathProCpt,
            xlab = "Probability mass", ylab = "",
            yaxt = "n", xaxt = "n")
       
-      # Label scaling parameters
       min_width_label <- 0.05
       cex_max <- 0.85
       cex_min <- 0.55
       
       for (i in seq_along(probs)) {
-        rect(
-          xleft = lefts[i], ybottom = 0.25,
-          xright = rights[i], ytop = 0.75,
-          col = cols[i],
-          border = "black",
-          lwd = if (isTRUE(locks[i])) 3 else 1
-        )
+        rect(lefts[i], 0.25, rights[i], 0.75, col = cols[i], border = "black")
         
         width <- rights[i] - lefts[i]
         if (width >= min_width_label) {
-          # width=0.05 -> cex_min ; width=0.20+ -> cex_max
           scaled <- cex_min + (pmin(width, 0.20) - 0.05) * (cex_max - cex_min) / (0.20 - 0.05)
           cex <- max(cex_min, min(cex_max, scaled))
-          
           mid <- (lefts[i] + rights[i]) / 2
-          text(mid, 0.50, labels = sprintf("%s\n%.2f", gsub("_"," ",state_names[i]), probs[i]), cex = cex)
+          text(mid, 0.50,
+               labels = sprintf("%s\n%.2f", gsub("_", " ", state_names[i]), probs[i]),
+               cex = cex)
         }
       }
       
-      # Ticks at elicitation grid
       ticks_minor <- seq(0, 1, by = PROB_STEP)
       ticks_major <- seq(0, 1, by = 0.1)
       axis(1, at = ticks_minor, labels = FALSE, tck = -0.03)
       axis(1, at = ticks_major, labels = sprintf("%.1f", ticks_major), cex.axis = 0.8)
-      
     }, res = 120)
-    
-    
     
     # ---- Table ----
     output$cpt_table <- renderDT({
       req(cpt())
       
       df <- cpt()
-      
       sc <- state_cols()
-      prob_names <- character(0)
-      if (cpt_type() == "with_parents" && length(sc) > 0) prob_names <- names(df)[sc]
-      if (cpt_type() == "no_parents" && "Probability" %in% names(df)) prob_names <- "Probability"
       
-      df_show <- df
-      if (length(prob_names) > 0) df_show[, prob_names] <- round(df_show[, prob_names], 2)
-      
-      # HARD sanitize for DT/JSON
-      df_show <- sanitize_for_dt(df_show)
-      names(df_show) <- make.unique(names(df_show))   # avoid duplicate names
-      
-      # Add row ID (possibly add it directly in CPT generation?)
-      df_show <- cbind(.row_id = seq_len(nrow(df_show)), df_show)
-      
-      datatable(
-        df_show,
-        selection = "none",
-        rownames = FALSE,
-        options = list(
-          pageLength = 100,
-          columnDefs = list(list(targets = 0, visible = FALSE, searchable = FALSE)),
-          rowCallback = JS("
-            function(row, data, index) {
-              $(row).off('dblclick');
-              $(row).on('dblclick', function() {
-                // data[0] is hidden .row_id
-                Shiny.setInputValue('table_dblclick_row', parseInt(data[0]), {priority: 'event'});
-              });
-            }
-          ")
-        )
-      )
-    }, server = TRUE)
-    
-    
-    # Update DT via proxy ONLY after DT exists on client
-    observeEvent(list(cpt(), input$cpt_table_rows_current), {
-      req(cpt())
-      req(!is.null(input$cpt_table_rows_current))
-      
-      df <- cpt()
-      
-      sc <- state_cols()
       prob_names <- character(0)
       if (cpt_type() == "with_parents" && length(sc) > 0) prob_names <- names(df)[sc]
       if (cpt_type() == "no_parents" && "Probability" %in% names(df)) prob_names <- "Probability"
@@ -1175,13 +952,61 @@ run_cpt_app <- function(pathProCpt,
       df_show <- sanitize_for_dt(df_show)
       names(df_show) <- make.unique(names(df_show))
       
-      # add stable id
-      df_show <- cbind(.row_id = seq_len(nrow(df_show)), df_show)
+      bad <- row_bad_flags(df = df, cpt_type = cpt_type(), state_cols = state_cols())
+      
+      df_show <- cbind(.row_id = seq_len(nrow(df_show)),
+                       .row_bad = as.integer(bad),
+                       df_show)
+      
+      datatable(
+        df_show,
+        selection = "none",
+        rownames = FALSE,
+        options = list(
+          pageLength = 100,
+          columnDefs = list(
+            list(targets = c(0, 1), visible = FALSE, searchable = FALSE)
+          ),
+          rowCallback = JS("
+            function(row, data, index) {
+
+              if (parseInt(data[1]) === 1) $(row).addClass('bad-row');
+              else $(row).removeClass('bad-row');
+
+              $(row).off('dblclick');
+              $(row).on('dblclick', function() {
+                Shiny.setInputValue('table_dblclick_row', parseInt(data[0]), {priority: 'event'});
+              });
+            }
+          ")
+        )
+      )
+    }, server = TRUE)
+    
+    observeEvent(list(cpt(), input$cpt_table_rows_current), {
+      req(cpt(), !is.null(input$cpt_table_rows_current))
+      
+      df <- cpt()
+      sc <- state_cols()
+      
+      prob_names <- character(0)
+      if (cpt_type() == "with_parents" && length(sc) > 0) prob_names <- names(df)[sc]
+      if (cpt_type() == "no_parents" && "Probability" %in% names(df)) prob_names <- "Probability"
+      
+      df_show <- df
+      if (length(prob_names) > 0) df_show[, prob_names] <- round(df_show[, prob_names], 2)
+      
+      df_show <- sanitize_for_dt(df_show)
+      names(df_show) <- make.unique(names(df_show))
+      
+      bad <- row_bad_flags(df = df, cpt_type = cpt_type(), state_cols = state_cols())
+      
+      df_show <- cbind(.row_id = seq_len(nrow(df_show)),
+                       .row_bad = as.integer(bad),
+                       df_show)
       
       DT::replaceData(cpt_proxy, df_show, resetPaging = FALSE, rownames = FALSE)
     }, ignoreInit = TRUE)
-    
-    
     
     # ---- Save ----
     observeEvent(input$save, {
@@ -1189,32 +1014,21 @@ run_cpt_app <- function(pathProCpt,
       df <- cpt()
       sc <- state_cols()
       
-      if (length(sc) > 0) {
-        df[, sc] <- round(df[, sc], 2)
-      }
+      if (length(sc) > 0) df[, sc] <- round(df[, sc], 2)
+      write.csv(df, file.path(pathProCpt, folder, input$cpt_file), row.names = FALSE)
       
-      write.csv(df, file.path(pathProCpt,folder, input$cpt_file), row.names = FALSE)
-      # write.csv(df, file.path(pathProCpt,"00_ManualShinyExportsTest", input$cpt_file), row.names = FALSE)
-      cpt(df)  # keep app state consistent with what you saved
-      
+      cpt(df)
       showNotification("CPT saved", type = "message")
     })
     
-    # ---- Quit ----
     observeEvent(input$quit, {
       stopApp()
     })
   }
   
   shinyApp(ui, server)
-
 }
 
-
-# Direct runner
-
-# If you run this file interactively, it starts the app with no filter
 if (interactive()) {
   run_cpt_app(pathProCpt = pathProCpt, folder = "01_CPT")
 }
-
