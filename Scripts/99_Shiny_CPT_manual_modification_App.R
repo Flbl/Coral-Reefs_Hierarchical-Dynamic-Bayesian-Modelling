@@ -8,10 +8,15 @@
 
 library(shiny)
 library(DT)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
 
 # =========================
 # Utility functions
 # =========================
+
+`%||%` <- function(a, b) if (!is.null(a)) a else b
 
 detect_cpt_type <- function(df) {
   if (all(c("State", "Probability") %in% names(df))) {
@@ -195,10 +200,14 @@ infer_cpt_structure <- function(df) {
   pmax(p, 0)
 }
 
-.probs_gaussian_center <- function(score, K, temperature = 1) {
-  temperature <- max(1e-6, temperature)
-  center <- 1 + (K - 1) * plogis(score / temperature)
-  sigma <- max(1e-3, temperature)
+# Gaussian-center with decoupled saturation (center_temp) and smoothing width (sigma)
+.probs_gaussian_center_cs <- function(score, K, center_temp = 1, sigma = 1) {
+  center_temp <- max(1e-6, center_temp)
+  sigma <- max(1e-6, sigma)
+  
+  # center position (1..K), saturates for large |score|
+  center <- 1 + (K - 1) * plogis(score / center_temp)
+  
   idx <- seq_len(K)
   w <- exp(-0.5 * ((idx - center) / sigma)^2)
   w / sum(w)
@@ -209,6 +218,8 @@ build_monotone_cpt <- function(df,
                                parent_weights = NULL,
                                method = c("ordinal_logit", "gaussian_center"),
                                temperature = 1,
+                               center_temp = 1,
+                               sigma = 1,
                                floor = 0.01) {
   
   method <- match.arg(method)
@@ -260,7 +271,11 @@ build_monotone_cpt <- function(df,
   P <- matrix(0, nrow(df), K)
   for (i in seq_len(nrow(df))) {
     s <- total_score[i]
-    p <- if (method == "ordinal_logit") .probs_ordinal_logit(s, K, temperature = temperature) else .probs_gaussian_center(s, K, temperature = temperature)
+    p <- if (method == "ordinal_logit") {
+      .probs_ordinal_logit(s, K, temperature = temperature)
+    } else {
+      .probs_gaussian_center_cs(s, K, center_temp = center_temp, sigma = sigma)
+    }
     p <- pmax(p, 0)
     p <- p + floor
     p <- p / sum(p)
@@ -291,24 +306,27 @@ run_cpt_app <- function(pathProCpt,
     sidebarLayout(
       sidebarPanel(
         selectInput("cpt_file", "Select CPT", choices = NULL),
-        uiOutput("row_selector"),
-        uiOutput("parent_question"),
-        hr(),
-        uiOutput("sliders_ui"),
-        hr(),
-        uiOutput("row_sum_indicator"),
         tags$h4("Monotone CPT generator"),
+        checkboxInput("show_contours", "Show contours", value = FALSE),
         uiOutput("mono_weights_ui"),
         uiOutput("mono_scores_ui"),
         selectInput("mono_method", "Method",
                     choices = c("Ordinal logit" = "ordinal_logit",
                                 "Gaussian center" = "gaussian_center"),
                     selected = "gaussian_center"),
-        sliderInput("mono_temp", "Temperature / sharpness",
+        sliderInput("mono_center_temp", "Center saturation (lower = stronger extremes)",
                     min = 0.1, max = 5, value = 1, step = 0.1),
+        sliderInput("mono_sigma", "Smoothing width (higher = smoother transitions)",
+                    min = 0.2, max = 4, value = 1, step = 0.1),
         numericInput("mono_floor", "Smoothness floor", value = 0.01, min = 0, step = 0.01),
         actionButton("apply_monotone", "Apply monotone CPT", class = "btn-primary"),
         hr(),
+        uiOutput("row_selector"),
+        uiOutput("parent_question"),
+        hr(),
+        uiOutput("sliders_ui"),
+        hr(),
+        uiOutput("row_sum_indicator"),
         actionButton("save", "Save CPT"),
         actionButton("quit", "Quit"),
         tags$style(HTML("
@@ -355,7 +373,20 @@ run_cpt_app <- function(pathProCpt,
       ),
       
       mainPanel(
-        plotOutput("prob_bar", height = "160px"),
+        fluidRow(
+          column(
+            width = 12,
+            plotOutput("cpt_curve", height = "420px"),
+            uiOutput("mono_params_text")
+          )
+        ),
+        fluidRow(
+          column(
+            width = 12,
+            br(),
+            plotOutput("prob_bar", height = "170px")
+          )
+        ),
         hr(),
         DTOutput("cpt_table")
       )
@@ -370,6 +401,8 @@ run_cpt_app <- function(pathProCpt,
     
     cpt_dir <- file.path(pathProCpt, folder)
     if (!dir.exists(cpt_dir)) stop(paste("CPT directory does not exist:", cpt_dir))
+    
+    params_file <- file.path(cpt_dir, "00_monotone_params_applied.csv")
     
     updating <- reactiveVal(FALSE)
     
@@ -568,6 +601,170 @@ run_cpt_app <- function(pathProCpt,
       df
     }
     
+    # --- Helpers to compute X axis (parent score) and Y (expected child state)
+    get_parent_names <- function(df, sc) {
+      st <- infer_cpt_structure(df)
+      names(df)[st$parent_cols]
+    }
+    
+    get_child_positions <- function(K) {
+      # y-axis meaning: expected child state position (1..K).
+      # If you prefer centered scores, replace with .default_scores(...) or similar.
+      seq_len(K)
+    }
+    
+    # Read current UI weights into a named numeric vector
+    current_parent_weights <- reactive({
+      req(cpt(), cpt_type())
+      if (cpt_type() != "with_parents") return(NULL)
+      
+      df <- cpt()
+      st <- infer_cpt_structure(df)
+      parent_names <- names(df)[st$parent_cols]
+      
+      w <- setNames(rep(1, length(parent_names)), parent_names)
+      for (pn in parent_names) {
+        val <- input[[paste0("w_", pn)]]
+        if (!is.null(val) && is.finite(val)) w[pn] <- as.numeric(val)
+      }
+      w
+    })
+    
+    # Read current UI scores into a named list of named numeric vectors
+    current_parent_scores <- reactive({
+      req(cpt(), cpt_type())
+      if (cpt_type() != "with_parents") return(NULL)
+      
+      df <- cpt()
+      st <- infer_cpt_structure(df)
+      parent_names <- names(df)[st$parent_cols]
+      
+      ps <- list()
+      for (pn in parent_names) {
+        v <- df[[pn]]
+        levs <- if (is.factor(v)) levels(v) else unique(as.character(v))
+        levs <- as.character(levs)
+        
+        default_sc <- .default_scores(levs)
+        scv <- numeric(length(levs))
+        for (i in seq_along(levs)) {
+          val <- input[[paste0("score_", pn, "_", i)]]
+          scv[i] <- if (is.null(val) || !is.finite(val)) default_sc[i] else as.numeric(val)
+        }
+        ps[[pn]] <- setNames(scv, levs)
+      }
+      ps
+    })
+    
+    # Compute total parent score per CPT row using current UI weights/scores
+    compute_total_parent_score <- function(df, parent_scores, parent_weights) {
+      st <- infer_cpt_structure(df)
+      parent_names <- names(df)[st$parent_cols]
+      x <- numeric(nrow(df))
+      
+      for (pn in parent_names) {
+        w <- as.numeric(parent_weights[pn])
+        mp <- parent_scores[[pn]]
+        vals <- as.character(df[[pn]])
+        sc <- mp[vals]
+        sc[is.na(sc)] <- 0
+        x <- x + w * as.numeric(sc)
+      }
+      x
+    }
+    
+    # Expected child position per row (y = sum p_k * k)
+    expected_child_position <- function(P_row) {
+      P_row <- as.numeric(P_row)
+      P_row[!is.finite(P_row)] <- 0
+      s <- sum(P_row)
+      if (s <= 0) return(NA_real_)
+      P_row <- P_row / s
+      pos <- get_child_positions(length(P_row))
+      sum(P_row * pos)
+    }
+    
+    # Serialize params for saving
+    serialize_weights <- function(w) {
+      paste(sprintf("%s=%g", names(w), as.numeric(w)), collapse = ";")
+    }
+    serialize_scores <- function(ps) {
+      # parent{level=score;level=score}|parent{...}
+      paste(vapply(names(ps), function(pn) {
+        lev <- names(ps[[pn]])
+        sc  <- as.numeric(ps[[pn]])
+        inner <- paste(sprintf("%s=%g", lev, sc), collapse = ";")
+        paste0(pn, "{", inner, "}")
+      }, character(1)), collapse = "|")
+    }
+    
+    # ---- Heatmap helpers ----
+    
+    # Long format: (x, child_index, prob)
+    cpt_long_from_matrix <- function(x, Pmat) {
+      K <- ncol(Pmat)
+      data.frame(
+        x = rep(x, each = K),
+        child_index = rep(seq_len(K), times = length(x)),
+        prob = as.numeric(t(Pmat)),
+        stringsAsFactors = FALSE
+      )
+    }
+    
+    # Bin x to reduce overplotting (and average probabilities within bins)
+    bin_and_average <- function(df_long, n_bins = 60) {
+      xr <- range(df_long$x, finite = TRUE)
+      if (!all(is.finite(xr)) || diff(xr) <= 0) {
+        df_long$x_bin <- df_long$x
+      } else {
+        bw <- diff(xr) / n_bins
+        bw <- max(bw, 1e-6)
+        df_long$x_bin <- round(df_long$x / bw) * bw
+      }
+      
+      # mean prob per (x_bin, child_index)
+      aggregate(prob ~ x_bin + child_index, data = df_long, FUN = mean)
+    }
+    
+    # Compute monotone preview probabilities on a dense x-grid (long format)
+    monotone_preview_long <- function(xg, K, method, temp, floor) {
+      out <- vector("list", length(xg))
+      
+      for (i in seq_along(xg)) {
+        s <- xg[i]
+        p <- if (method == "ordinal_logit") {
+          .probs_ordinal_logit(s, K, temperature = temp)
+        } else {
+          .probs_gaussian_center(s, K, temperature = temp)
+        }
+        p <- pmax(p, 0)
+        p <- p + floor
+        p <- p / sum(p)
+        
+        out[[i]] <- data.frame(
+          x = rep(s, K),
+          child_index = seq_len(K),
+          prob = p,
+          stringsAsFactors = FALSE
+        )
+      }
+      do.call(rbind, out)
+    }
+    
+    # Row score sum to display
+    row_score_sum <- reactive({
+      req(cpt())
+      df <- cpt()
+      
+      if (cpt_type() != "with_parents") return(rep(NA_real_, nrow(df)))
+      
+      w  <- current_parent_weights()
+      ps <- current_parent_scores()
+      req(!is.null(w), !is.null(ps))
+      
+      compute_total_parent_score(df, parent_scores = ps, parent_weights = w)
+    })
+    
     # ---- Monotone UI: weights + scores
     output$mono_weights_ui <- renderUI({
       req(cpt(), cpt_type())
@@ -644,17 +841,48 @@ run_cpt_app <- function(pathProCpt,
       
       new_df <- build_monotone_cpt(
         df,
-        parent_scores = parent_scores,
+        parent_scores  = parent_scores,
         parent_weights = w,
-        method = input$mono_method,
-        temperature = input$mono_temp,
-        floor = input$mono_floor
+        method         = input$mono_method,
+        temperature    = as.numeric(input$mono_center_temp),  # used only for ordinal_logit
+        center_temp    = as.numeric(input$mono_center_temp),  # used for gaussian_center
+        sigma          = as.numeric(input$mono_sigma),        # used for gaussian_center
+        floor          = as.numeric(input$mono_floor)
       )
       
       cpt(new_df)
       state_cols(get_state_columns(new_df))
       lock_store(matrix(FALSE, nrow = nrow(new_df), ncol = length(st$child_cols)))
       showNotification("Monotone CPT applied. You can now tweak row-wise.", type = "message")
+      
+      
+      # ---- Save applied parameters (one line per CPT file)
+      params_row <- data.frame(
+        cpt_file = input$cpt_file,
+        method   = input$mono_method,
+        center_temp = as.numeric(input$mono_center_temp),
+        sigma       = as.numeric(input$mono_sigma),
+        floor    = as.numeric(input$mono_floor),
+        weights  = serialize_weights(w),
+        scores   = serialize_scores(parent_scores),
+        saved_at = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+        stringsAsFactors = FALSE
+      )
+      
+      if (!file.exists(params_file)) {
+        write.csv(params_row, params_file, row.names = FALSE)
+      } else {
+        old <- try(read.csv(params_file, stringsAsFactors = FALSE), silent = TRUE)
+        if (inherits(old, "try-error") || is.null(old) || nrow(old) == 0) {
+          write.csv(params_row, params_file, row.names = FALSE)
+        } else {
+          # replace existing row for this CPT if present, else append
+          keep <- old$cpt_file != input$cpt_file
+          out <- rbind(old[keep, , drop = FALSE], params_row)
+          write.csv(out, params_file, row.names = FALSE)
+        }
+      }
+      
       
       destroy_observers()
       make_slider_observers()
@@ -806,6 +1034,47 @@ run_cpt_app <- function(pathProCpt,
       )
     })
     
+    
+    output$mono_params_text <- renderUI({
+      req(input$cpt_file)
+      
+      if (!file.exists(params_file)) {
+        return(tags$div(
+          style = "font-size: 10px; margin-top: 6px; padding: 8px; border: 1px solid #ddd; border-radius: 6px; max-height: 140px; overflow-y: auto;",
+          "No saved monotone parameters for any CPT yet."
+        ))
+      }
+      
+      tab <- try(read.csv(params_file, stringsAsFactors = FALSE), silent = TRUE)
+      if (inherits(tab, "try-error") || is.null(tab) || nrow(tab) == 0) {
+        return(tags$div(
+          style = "font-size: 12px; color: #666; margin-top: 6px;",
+          "Parameter registry is empty or unreadable."
+        ))
+      }
+      
+      row <- tab[tab$cpt_file == input$cpt_file, , drop = FALSE]
+      if (nrow(row) == 0) {
+        return(tags$div(
+          style = "font-size: 12px; color: #666; margin-top: 6px;",
+          "No saved monotone parameters for this CPT."
+        ))
+      }
+      
+      r <- row[nrow(row), , drop = FALSE]
+      
+      tags$div(
+        style = "font-size: 12px; margin-top: 6px; padding: 8px; border: 1px solid #ddd; border-radius: 6px;",
+        tags$div(tags$b("Last applied monotone parameters for this CPT")),
+        tags$div(sprintf("Saved at: %s", r$saved_at)),
+        tags$div(sprintf("Method: %s | CenterTemp: %s | Sigma: %s | Floor: %s",
+                         r$method, r$center_temp, r$sigma, r$floor)),
+        tags$div(style="margin-top:4px;", tags$b("Weights:"), tags$div(style="color:#444;", r$weights)),
+        tags$div(style="margin-top:4px;", tags$b("Scores:"), tags$div(style="color:#444; word-break: break-word;", r$scores))
+      )
+    })
+    
+    
     # ---- Sliders ----
     output$sliders_ui <- renderUI({
       req(cpt(), cpt_type(), !is.null(lock_store()))
@@ -869,6 +1138,160 @@ run_cpt_app <- function(pathProCpt,
         txt
       )
     })
+    
+    
+    output$cpt_curve <- renderPlot({
+      req(cpt(), cpt_type())
+      if (cpt_type() != "with_parents") {
+        ggplot() + theme_void() + annotate("text", x = 0, y = 0, label = "Heatmap view is for CPTs with parents (P_* columns).")
+      } else {
+        
+        df <- cpt()
+        sc <- state_cols()
+        req(length(sc) > 0)
+        
+        # Current axis definition (must match what users tune)
+        w  <- current_parent_weights()
+        ps <- current_parent_scores()
+        req(!is.null(w), !is.null(ps))
+        
+        # Parent-score per row (x)
+        x_rows <- compute_total_parent_score(df, parent_scores = ps, parent_weights = w)
+        
+        # CPT probabilities wide -> long
+        Pmat <- as.matrix(df[, sc, drop = FALSE])
+        storage.mode(Pmat) <- "numeric"
+        child_states <- sub("^P_", "", names(df)[sc])
+        K <- length(child_states)
+        
+        # Build long table: one rectangle per (row, child_state)
+        long <- as.data.frame(Pmat)
+        names(long) <- child_states
+        long$.row <- seq_len(nrow(long))
+        long$score <- x_rows
+        
+        long <- long |>
+          tidyr::pivot_longer(cols = all_of(child_states),
+                              names_to = "child_state",
+                              values_to = "prob") |>
+          mutate(
+            child_state = factor(child_state, levels = child_states),
+            y = as.integer(child_state)
+          ) |>
+          filter(is.finite(score), is.finite(prob))
+        
+        validate(need(nrow(long) > 0, "No valid CPT rows to plot."))
+        
+        # ---- IMPORTANT: build per-row xmin/xmax (no bins)
+        # Use unique score per row; if duplicates exist, we will slightly jitter them for display
+        # (otherwise rectangles collapse onto the same x)
+        row_scores <- long |>
+          distinct(.row, score) |>
+          arrange(score) |>
+          mutate(
+            score_plot = score
+          )
+        
+        # handle duplicated scores: tiny deterministic jitter by row index
+        dup <- duplicated(row_scores$score_plot) | duplicated(row_scores$score_plot, fromLast = TRUE)
+        if (any(dup)) {
+          # jitter magnitude is tiny relative to axis range
+          rng <- diff(range(row_scores$score_plot))
+          eps <- if (is.finite(rng) && rng > 0) rng * 1e-4 else 1e-4
+          row_scores <- row_scores |>
+            group_by(score_plot) |>
+            mutate(score_plot = score_plot + (row_number() - 1) * eps) |>
+            ungroup()
+        }
+        
+        # Compute boundaries by midpoints between neighbors
+        s <- row_scores$score_plot
+        n <- length(s)
+        if (n == 1) {
+          # arbitrary width if only one row
+          dx <- 1
+          xmin <- s - dx/2
+          xmax <- s + dx/2
+        } else {
+          mids <- (s[-1] + s[-n]) / 2
+          xmin <- c(s[1] - (mids[1] - s[1]), mids)
+          xmax <- c(mids, s[n] + (s[n] - mids[n-1]))
+        }
+        
+        row_scores$xmin <- xmin
+        row_scores$xmax <- xmax
+        
+        # join xmin/xmax back to long
+        long <- long |>
+          left_join(row_scores |> select(.row, xmin, xmax, score_plot), by = ".row")
+        
+        # ---- OPTIONAL: overlay contour of the current parameterized monotone curve surface
+        # Build dense x-grid and compute p(state|x) using your method
+        method     <- input$mono_method %||% "gaussian_center"
+        center_tmp <- input$mono_center_temp %||% 1
+        sigma_val  <- input$mono_sigma %||% 1
+        floor      <- input$mono_floor %||% 0.01
+        
+        # grid for preview (smooth)
+        xg <- seq(min(row_scores$score_plot), max(row_scores$score_plot), length.out = 220)
+        
+        Pfit <- vapply(xg, function(xval) {
+          p <- if (method == "ordinal_logit") {
+            .probs_ordinal_logit(xval, K, temperature = center_tmp)
+          } else {
+            .probs_gaussian_center_cs(xval, K, center_temp = center_tmp, sigma = sigma_val)
+          }
+          p <- pmax(p, 0)
+          p <- p + floor
+          p <- p / sum(p)
+          p
+        }, numeric(K))
+        Pfit <- t(Pfit)  # length(xg) x K
+        
+        fit_long <- data.frame(
+          x = rep(xg, times = K),
+          y = rep(seq_len(K), each = length(xg)),
+          prob = as.vector(Pfit)
+        )
+        
+        # ---- Plot
+        ggplot() +
+          geom_rect(
+            data = long,
+            aes(xmin = xmin, xmax = xmax, ymin = y - 0.5, ymax = y + 0.5, fill = prob),
+            color = NA
+          ) +
+          # contour overlay from parameterized curve (thin)
+          { if (isTRUE(input$show_contours)) {
+            geom_contour(
+              data = fit_long,
+              aes(x = x, y = y, z = prob),
+              bins = 7,
+              linewidth = 0.3,
+              alpha = 0.6
+            )
+          }
+          } +
+          scale_fill_gradient(low = "white", high = "red", limits = c(0, 1), name = "P") +
+          scale_y_continuous(
+            breaks = seq_len(K),
+            labels = child_states,
+            expand = expansion(add = 0.02)
+          ) +
+          labs(
+            x = "Parent score (current weights + scores)",
+            y = "Child state",
+            title = "CPT probability surface (one tile per CPT row) + monotone preview contours"
+          ) +
+          theme_minimal(base_size = 10) +
+          theme(
+            legend.position = "right",
+            plot.title = element_text(size = 11),
+            axis.text.y = element_text(size = 8)
+          )
+      }
+    }, res = 120)
+    
     
     # ---- bar plot ----
     output$prob_bar <- renderPlot({
@@ -947,6 +1370,21 @@ run_cpt_app <- function(pathProCpt,
       if (cpt_type() == "no_parents" && "Probability" %in% names(df)) prob_names <- "Probability"
       
       df_show <- df
+      # ---- add computed parent score sum column (between parents and P_* columns)
+      if (cpt_type() == "with_parents") {
+        sc_idx <- state_cols()
+        if (length(sc_idx) > 0) {
+          insert_pos <- min(sc_idx)  # first P_ column position in df
+          score_vec <- row_score_sum()
+          
+          # Build new df_show with insertion before first P_ col
+          df_show <- cbind(
+            df_show[, seq_len(insert_pos - 1), drop = FALSE],
+            ScoreSum = round(score_vec, 3),
+            df_show[, insert_pos:ncol(df_show), drop = FALSE]
+          )
+        }
+      }
       if (length(prob_names) > 0) df_show[, prob_names] <- round(df_show[, prob_names], 2)
       
       df_show <- sanitize_for_dt(df_show)
@@ -983,7 +1421,13 @@ run_cpt_app <- function(pathProCpt,
       )
     }, server = TRUE)
     
-    observeEvent(list(cpt(), input$cpt_table_rows_current), {
+    observeEvent(list(
+      cpt(),
+      input$cpt_table_rows_current,
+      current_parent_weights(),
+      current_parent_scores()
+    ), {
+      
       req(cpt(), !is.null(input$cpt_table_rows_current))
       
       df <- cpt()
@@ -994,6 +1438,20 @@ run_cpt_app <- function(pathProCpt,
       if (cpt_type() == "no_parents" && "Probability" %in% names(df)) prob_names <- "Probability"
       
       df_show <- df
+      # ---- add computed parent score sum column (between parents and P_* columns)
+      if (cpt_type() == "with_parents") {
+        sc_idx <- state_cols()
+        if (length(sc_idx) > 0) {
+          insert_pos <- min(sc_idx)
+          score_vec <- row_score_sum()
+          
+          df_show <- cbind(
+            df_show[, seq_len(insert_pos - 1), drop = FALSE],
+            ScoreSum = round(score_vec, 3),
+            df_show[, insert_pos:ncol(df_show), drop = FALSE]
+          )
+        }
+      }
       if (length(prob_names) > 0) df_show[, prob_names] <- round(df_show[, prob_names], 2)
       
       df_show <- sanitize_for_dt(df_show)
