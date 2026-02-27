@@ -1277,6 +1277,93 @@ run_cpt_app <- function(pathProCpt,
       DT::replaceData(cpt_proxy, df_show, resetPaging = FALSE, rownames = FALSE)
     }, ignoreInit = TRUE)
     
+    
+    # ---- monotone params persistence ----
+    params_file <- file.path(pathProCpt, folder, "00_monotone_params_applied.csv")
+    
+    cpt_id_from_file <- function(fname) {
+      # id used as key in the params file (stable + human-readable)
+      # Example: CPT_MyNode.csv -> MyNode
+      id <- gsub("\\.csv$", "", fname)
+      id <- gsub("^CPT_+", "", id)
+      id
+    }
+    
+    flatten_params_row <- function(cpt_file, p) {
+      # p is mono_params() list (or NULL)
+      # Returns a single-row data.frame ready for upsert.
+      id <- cpt_id_from_file(cpt_file)
+      
+      if (is.null(p)) {
+        # For no_parents CPTs, or if something is missing
+        return(data.frame(
+          cpt_id = id,
+          cpt_file = cpt_file,
+          has_generator = FALSE,
+          method = NA_character_,
+          center_temp = NA_real_,
+          sigma = NA_real_,
+          floor = NA_real_,
+          weights_json = NA_character_,
+          scores_json = NA_character_,
+          saved_at = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+          stringsAsFactors = FALSE
+        ))
+      }
+      
+      data.frame(
+        cpt_id = id,
+        cpt_file = cpt_file,
+        has_generator = TRUE,
+        method = as.character(p$method %||% NA_character_),
+        center_temp = as.numeric(p$center_temp %||% NA_real_),
+        sigma = as.numeric(p$sigma %||% NA_real_),
+        floor = as.numeric(p$floor %||% NA_real_),
+        # Store complex structures in a compact portable form.
+        # (JSON requires jsonlite; dput-string avoids extra deps.)
+        weights_json = paste(capture.output(dput(p$weights)), collapse = ""),
+        scores_json  = paste(capture.output(dput(p$scores)), collapse = ""),
+        saved_at = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+        stringsAsFactors = FALSE
+      )
+    }
+    
+    upsert_params_file <- function(row_df, file) {
+      stopifnot(is.data.frame(row_df), nrow(row_df) == 1)
+      
+      if (file.exists(file)) {
+        old <- tryCatch(
+          read.csv(file, stringsAsFactors = FALSE, check.names = FALSE),
+          error = function(e) NULL
+        )
+      } else {
+        old <- NULL
+      }
+      
+      if (is.null(old) || nrow(old) == 0) {
+        out <- row_df
+      } else {
+        # Ensure required key exists
+        if (!("cpt_id" %in% names(old))) {
+          # If old file is malformed, start fresh but keep a backup
+          file.copy(file, paste0(file, ".bak"), overwrite = TRUE)
+          out <- row_df
+        } else {
+          # Align columns (add missing cols both ways)
+          for (nm in setdiff(names(row_df), names(old))) old[[nm]] <- NA
+          for (nm in setdiff(names(old), names(row_df))) row_df[[nm]] <- NA
+          row_df <- row_df[, names(old), drop = FALSE]
+          
+          i <- match(row_df$cpt_id[1], old$cpt_id)
+          if (is.na(i)) out <- rbind(old, row_df) else { old[i, ] <- row_df; out <- old }
+        }
+      }
+      
+      # Write back
+      write.csv(out, file, row.names = FALSE)
+    }
+    
+    
     # -------------------------
     # Save / Quit
     # -------------------------
@@ -1287,11 +1374,24 @@ run_cpt_app <- function(pathProCpt,
       
       if (length(sc) > 0) df[, sc] <- round(df[, sc], 2)
       
+      # Save CPT itself
       write.csv(df, file.path(pathProCpt, folder, input$cpt_file), row.names = FALSE)
       
+      # Save generator params (one row per CPT id, upsert)
+      # Only meaningful for with-parents CPTs; for others we still write has_generator=FALSE.
+      p <- NULL
+      if (isTRUE(cpt_type() == "with_parents")) {
+        # mono_params() already reflects current UI values
+        p <- tryCatch(mono_params(), error = function(e) NULL)
+      }
+      row_df <- flatten_params_row(input$cpt_file, p)
+      upsert_params_file(row_df, params_file)
+      
+      # Update baselines
       cpt(df)
       cpt_base(df)
-      showNotification("CPT saved", type = "message")
+      
+      showNotification("CPT saved, params recorded)", type = "message")
     })
     
     observeEvent(input$quit, stopApp())
